@@ -1,8 +1,8 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -17,17 +17,73 @@ enum DocumentStatus {
 }
 
 model Document {
-  id String @id @default(cuid())
-  name String
-  mimeType String
-  size Int
-  blobPath String
-  status DocumentStatus @default(UPLOADED)
+  id            String          @id @default(cuid())
+  name          String
+  mimeType      String
+  size          Int
+  blobPath      String
+  status        DocumentStatus  @default(UPLOADED)
 
-  pageCount Int?
-  extractedText String? 
+  pageCount     Int?
+  extractedText String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  pages         DocumentPage[]
+  chunks        DocumentChunk[]
+  analysis      DocumentAnalysis?
 }
 
+model DocumentPage {
+  id          String          @id @default(cuid())
+
+  documentId  String
+  document    Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  pageNumber  Int
+  content     String
+
+  createdAt   DateTime        @default(now())
+
+  chunks      DocumentChunk[]
+
+  @@unique([documentId, pageNumber])
+}
+
+model DocumentChunk {
+  id          String        @id @default(cuid())
+
+  documentId  String
+  document    Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  pageId      String?
+  page        DocumentPage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  chunkIndex  Int
+  content     String
+  pageNumber  Int?
+  tokenCount  Int?
+
+  createdAt   DateTime      @default(now())
+
+  @@unique([documentId, chunkIndex])
+}
+
+model DocumentAnalysis {
+  id          String    @id @default(cuid())
+
+  documentId  String    @unique
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  summary     String?
+  keyFindings Json?
+  risks       Json?
+  entities    Json?
+  actionItems Json?
+
+  model       String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
