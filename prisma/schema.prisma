@@ -79,7 +79,10 @@ model DocumentAnalysis {
   summary     String?
   keyFindings Json?
   risks       Json?
+  riskScore   Int?
   entities    Json?
+  importantDates Json?
+  importantNumbers Json?
   actionItems Json?
 
   model       String?
@@ -88,33 +91,33 @@ model DocumentAnalysis {
   updatedAt   DateTime  @updatedAt
 }
 
-model ChatConversation {
-  id         String   @id @default(cuid())
+// model ChatConversation {
+//   id         String   @id @default(cuid())
 
-  documentId String
-  document   Document @relation(
-    fields: [documentId],
-    references: [id],
-    onDelete: Cascade
-  )
+//   documentId String
+//   document   Document @relation(
+//     fields: [documentId],
+//     references: [id],
+//     onDelete: Cascade
+//   )
 
-  createdAt  DateTime @default(now())
+//   createdAt  DateTime @default(now())
 
-  messages   ChatMessage[]
-}
+//   messages   ChatMessage[]
+// }
 
-model ChatMessage {
-  id             String   @id @default(cuid())
+// model ChatMessage {
+//   id             String   @id @default(cuid())
 
-  conversationId String
-  conversation   ChatConversation @relation(
-    fields: [conversationId],
-    references: [id],
-    onDelete: Cascade
-  )
+//   conversationId String
+//   conversation   ChatConversation @relation(
+//     fields: [conversationId],
+//     references: [id],
+//     onDelete: Cascade
+//   )
 
-  role           String
-  content        String
+//   role           String
+//   content        String
 
-  createdAt      DateTime @default(now())
-}
+//   createdAt      DateTime @default(now())
+// }

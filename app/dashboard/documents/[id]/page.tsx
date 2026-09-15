@@ -10,6 +10,7 @@ import { ExtractedTextPanel } from "@/components/features/docuements/extracted-t
 import { ChunkList } from "@/components/features/docuements/chunk-list";
 import { RetryAnalysisButton } from "@/components/features/docuements/retry-analysis-button";
 import { AutoRefresh } from "@/components/features/docuements/auto-refresh";
+import { DocumentChat } from "@/components/features/docuements/document-chat";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default async function DocumentDetailPage(
@@ -43,9 +44,10 @@ export default async function DocumentDetailPage(
 
   const isImage = document.mimeType.startsWith("image/");
   const Icon = isImage ? FileImageIcon : FileTextIcon;
+  const isAnalyzed = document.status === "ANALYZED";
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
+    <main className="mx-auto max-w-6xl space-y-6 p-8">
       <Link
         href="/dashboard"
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -97,21 +99,33 @@ export default async function DocumentDetailPage(
         </>
       )}
 
-      {document.status === "ANALYZED" && (
-        <>
-          <AnalysisPanel analysis={document.analysis} />
+      {isAnalyzed && (
+        <div className="grid gap-6 lg:grid-cols-[1fr_380px] lg:items-start">
+          {/* Left: analysis, extracted text, chunks */}
+          <div className="min-w-0 space-y-6">
+            <AnalysisPanel analysis={document.analysis} />
 
-          {document.extractedText && (
-            <ExtractedTextPanel text={document.extractedText} />
-          )}
+            {document.extractedText && (
+              <ExtractedTextPanel text={document.extractedText} />
+            )}
 
-          <div>
-            <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-              Chunks ({chunks.length})
-            </h2>
-            <ChunkList chunks={chunks} />
+            <div>
+              <h2 className="mb-3 text-sm font-medium text-muted-foreground">
+                Chunks ({chunks.length})
+              </h2>
+              <ChunkList chunks={chunks} />
+            </div>
           </div>
-        </>
+
+          {/* Right: chat, pinned alongside the content on large screens */}
+          <Card
+            className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden p-0 lg:sticky lg:top-8"
+          >
+            <CardContent className="flex-1 overflow-hidden p-0">
+              <DocumentChat documentId={document.id} />
+            </CardContent>
+          </Card>
+        </div>
       )}
     </main>
   );

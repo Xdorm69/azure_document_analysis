@@ -15,6 +15,12 @@ import { storeDocumentChunks } from "@/lib/ai/store-chunks";
 
 import { indexDocumentChunks } from "@/lib/ai/index-chunks";
 
+import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
+
+import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
+
+import { storeAnalysis } from "@/lib/ai/store-analysis";
+
 export async function POST(
   request: Request,
   context: {
@@ -62,6 +68,13 @@ export async function POST(
 
     const searchStats = await indexDocumentChunks(document.id);
 
+    //ai summarization
+    const analysisContext = await getAnalysisContext(document.id);
+
+    const aiAnalysis = await analyzeDocumentWithAI(analysisContext);
+
+    await storeAnalysis(document.id, aiAnalysis);
+
     // 5. Save result
     const updated = await prisma.document.update({
       where: { id },
@@ -84,8 +97,9 @@ export async function POST(
       chunks: chunkStats,
 
       search: searchStats,
+
+      analysis: aiAnalysis,
     });
-    
   } catch (error) {
     console.error(error);
 

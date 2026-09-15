@@ -121,7 +121,7 @@ export function DocumentChat({
 
             <p className="mt-2 text-sm text-muted-foreground">
               Ask questions about the
-              document and I&npos;ll provide
+              document and I&apos;ll provide
               answers with page references.
             </p>
 

@@ -49,6 +49,8 @@ export type DocumentAnalysisCountAggregateOutputType = {
   keyFindings: number
   risks: number
   entities: number
+  importantDates: number
+  importantNumbers: number
   actionItems: number
   model: number
   createdAt: number
@@ -82,6 +84,8 @@ export type DocumentAnalysisCountAggregateInputType = {
   keyFindings?: true
   risks?: true
   entities?: true
+  importantDates?: true
+  importantNumbers?: true
   actionItems?: true
   model?: true
   createdAt?: true
@@ -168,6 +172,8 @@ export type DocumentAnalysisGroupByOutputType = {
   keyFindings: runtime.JsonValue | null
   risks: runtime.JsonValue | null
   entities: runtime.JsonValue | null
+  importantDates: runtime.JsonValue | null
+  importantNumbers: runtime.JsonValue | null
   actionItems: runtime.JsonValue | null
   model: string | null
   createdAt: Date
@@ -202,6 +208,8 @@ export type DocumentAnalysisWhereInput = {
   keyFindings?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   entities?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  importantDates?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  importantNumbers?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   actionItems?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   model?: Prisma.StringNullableFilter<"DocumentAnalysis"> | string | null
   createdAt?: Prisma.DateTimeFilter<"DocumentAnalysis"> | Date | string
@@ -216,6 +224,8 @@ export type DocumentAnalysisOrderByWithRelationInput = {
   keyFindings?: Prisma.SortOrderInput | Prisma.SortOrder
   risks?: Prisma.SortOrderInput | Prisma.SortOrder
   entities?: Prisma.SortOrderInput | Prisma.SortOrder
+  importantDates?: Prisma.SortOrderInput | Prisma.SortOrder
+  importantNumbers?: Prisma.SortOrderInput | Prisma.SortOrder
   actionItems?: Prisma.SortOrderInput | Prisma.SortOrder
   model?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -233,6 +243,8 @@ export type DocumentAnalysisWhereUniqueInput = Prisma.AtLeast<{
   keyFindings?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   entities?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  importantDates?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  importantNumbers?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   actionItems?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   model?: Prisma.StringNullableFilter<"DocumentAnalysis"> | string | null
   createdAt?: Prisma.DateTimeFilter<"DocumentAnalysis"> | Date | string
@@ -247,6 +259,8 @@ export type DocumentAnalysisOrderByWithAggregationInput = {
   keyFindings?: Prisma.SortOrderInput | Prisma.SortOrder
   risks?: Prisma.SortOrderInput | Prisma.SortOrder
   entities?: Prisma.SortOrderInput | Prisma.SortOrder
+  importantDates?: Prisma.SortOrderInput | Prisma.SortOrder
+  importantNumbers?: Prisma.SortOrderInput | Prisma.SortOrder
   actionItems?: Prisma.SortOrderInput | Prisma.SortOrder
   model?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -266,6 +280,8 @@ export type DocumentAnalysisScalarWhereWithAggregatesInput = {
   keyFindings?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   entities?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
+  importantDates?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
+  importantNumbers?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   actionItems?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   model?: Prisma.StringNullableWithAggregatesFilter<"DocumentAnalysis"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"DocumentAnalysis"> | Date | string
@@ -278,6 +294,8 @@ export type DocumentAnalysisCreateInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: string | null
   createdAt?: Date | string
@@ -292,6 +310,8 @@ export type DocumentAnalysisUncheckedCreateInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: string | null
   createdAt?: Date | string
@@ -304,6 +324,8 @@ export type DocumentAnalysisUpdateInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -318,6 +340,8 @@ export type DocumentAnalysisUncheckedUpdateInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -331,6 +355,8 @@ export type DocumentAnalysisCreateManyInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: string | null
   createdAt?: Date | string
@@ -343,6 +369,8 @@ export type DocumentAnalysisUpdateManyMutationInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -356,6 +384,8 @@ export type DocumentAnalysisUncheckedUpdateManyInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -374,6 +404,8 @@ export type DocumentAnalysisCountOrderByAggregateInput = {
   keyFindings?: Prisma.SortOrder
   risks?: Prisma.SortOrder
   entities?: Prisma.SortOrder
+  importantDates?: Prisma.SortOrder
+  importantNumbers?: Prisma.SortOrder
   actionItems?: Prisma.SortOrder
   model?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -436,6 +468,8 @@ export type DocumentAnalysisCreateWithoutDocumentInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: string | null
   createdAt?: Date | string
@@ -448,6 +482,8 @@ export type DocumentAnalysisUncheckedCreateWithoutDocumentInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: string | null
   createdAt?: Date | string
@@ -476,6 +512,8 @@ export type DocumentAnalysisUpdateWithoutDocumentInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -488,6 +526,8 @@ export type DocumentAnalysisUncheckedUpdateWithoutDocumentInput = {
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   actionItems?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   model?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -503,6 +543,8 @@ export type DocumentAnalysisSelect<ExtArgs extends runtime.Types.Extensions.Inte
   keyFindings?: boolean
   risks?: boolean
   entities?: boolean
+  importantDates?: boolean
+  importantNumbers?: boolean
   actionItems?: boolean
   model?: boolean
   createdAt?: boolean
@@ -517,6 +559,8 @@ export type DocumentAnalysisSelectCreateManyAndReturn<ExtArgs extends runtime.Ty
   keyFindings?: boolean
   risks?: boolean
   entities?: boolean
+  importantDates?: boolean
+  importantNumbers?: boolean
   actionItems?: boolean
   model?: boolean
   createdAt?: boolean
@@ -531,6 +575,8 @@ export type DocumentAnalysisSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
   keyFindings?: boolean
   risks?: boolean
   entities?: boolean
+  importantDates?: boolean
+  importantNumbers?: boolean
   actionItems?: boolean
   model?: boolean
   createdAt?: boolean
@@ -545,13 +591,15 @@ export type DocumentAnalysisSelectScalar = {
   keyFindings?: boolean
   risks?: boolean
   entities?: boolean
+  importantDates?: boolean
+  importantNumbers?: boolean
   actionItems?: boolean
   model?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type DocumentAnalysisOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "documentId" | "summary" | "keyFindings" | "risks" | "entities" | "actionItems" | "model" | "createdAt" | "updatedAt", ExtArgs["result"]["documentAnalysis"]>
+export type DocumentAnalysisOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "documentId" | "summary" | "keyFindings" | "risks" | "entities" | "importantDates" | "importantNumbers" | "actionItems" | "model" | "createdAt" | "updatedAt", ExtArgs["result"]["documentAnalysis"]>
 export type DocumentAnalysisInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   document?: boolean | Prisma.DocumentDefaultArgs<ExtArgs>
 }
@@ -574,6 +622,8 @@ export type $DocumentAnalysisPayload<ExtArgs extends runtime.Types.Extensions.In
     keyFindings: runtime.JsonValue | null
     risks: runtime.JsonValue | null
     entities: runtime.JsonValue | null
+    importantDates: runtime.JsonValue | null
+    importantNumbers: runtime.JsonValue | null
     actionItems: runtime.JsonValue | null
     model: string | null
     createdAt: Date
@@ -1008,6 +1058,8 @@ export interface DocumentAnalysisFieldRefs {
   readonly keyFindings: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly risks: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly entities: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
+  readonly importantDates: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
+  readonly importantNumbers: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly actionItems: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly model: Prisma.FieldRef<"DocumentAnalysis", 'String'>
   readonly createdAt: Prisma.FieldRef<"DocumentAnalysis", 'DateTime'>
