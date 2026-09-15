@@ -2,43 +2,38 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 
-import {
-  generateBlobSasUrl,
-} from "@/lib/azure/blob";
+import { generateBlobSasUrl } from "@/lib/azure/blob";
 
 import {
   analyzeDocument,
   getAnalysisResult,
 } from "@/lib/azure/analyze-document";
 
-import {
-  normalizeDocument,
-} from "@/lib/azure/normalize-document";
+import { normalizeDocument } from "@/lib/azure/normalize-document";
 
-import {
-  storeDocumentChunks,
-} from "@/lib/ai/store-chunks";
+import { storeDocumentChunks } from "@/lib/ai/store-chunks";
+
+import { indexDocumentChunks } from "@/lib/ai/index-chunks";
 
 export async function POST(
   request: Request,
   context: {
     params: Promise<{ id: string }>;
-  }
+  },
 ) {
   const { id } = await context.params;
 
   try {
-    const document =
-      await prisma.document.findUnique({
-        where: { id },
-      });
+    const document = await prisma.document.findUnique({
+      where: { id },
+    });
 
     if (!document) {
       return NextResponse.json(
         {
           error: "Document not found",
         },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -50,59 +45,47 @@ export async function POST(
     });
 
     // 1. Generate temporary URL
-    const sasUrl =
-      generateBlobSasUrl(
-        document.blobPath
-      );
+    const sasUrl = generateBlobSasUrl(document.blobPath);
 
     // 2. Start Azure analysis
-    const operationLocation =
-      await analyzeDocument(sasUrl);
+    const operationLocation = await analyzeDocument(sasUrl);
 
     // 3. Wait for result
-    const result =
-      await getAnalysisResult(
-        operationLocation
-      );
+    const result = await getAnalysisResult(operationLocation);
 
     // 4. Convert Azure response
-    const parsed =
-      normalizeDocument(result);
+    const parsed = normalizeDocument(result);
 
-    // u4. Chunk stats 
+    // u4. Chunk stats
 
-    const chunkStats =
-  await storeDocumentChunks(
-    document.id,
-    parsed
-  );
+    const chunkStats = await storeDocumentChunks(document.id, parsed);
+
+    const searchStats = await indexDocumentChunks(document.id);
 
     // 5. Save result
-    const updated =
-  await prisma.document.update({
-    where: { id },
-    data: {
-      status: "ANALYZED",
-      pageCount:
-        parsed.pageCount,
-      extractedText:
-        parsed.fullText,
-    },
-  });
+    const updated = await prisma.document.update({
+      where: { id },
+      data: {
+        status: "ANALYZED",
+        pageCount: parsed.pageCount,
+        extractedText: parsed.fullText,
+      },
+    });
 
     return NextResponse.json({
-  success: true,
+      success: true,
 
-  document: {
-    id: updated.id,
-    name: updated.name,
-    pageCount:
-      parsed.pageCount,
-  },
+      document: {
+        id: updated.id,
+        name: updated.name,
+        pageCount: parsed.pageCount,
+      },
 
-  chunks: chunkStats,
-});
+      chunks: chunkStats,
 
+      search: searchStats,
+    });
+    
   } catch (error) {
     console.error(error);
 
@@ -115,12 +98,9 @@ export async function POST(
 
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Analysis failed",
+        error: error instanceof Error ? error.message : "Analysis failed",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -12,6 +12,7 @@
   "dependencies": {
     "@azure-rest/ai-document-intelligence": "^1.1.0",
     "@azure/core-auth": "^1.11.0",
+    "@azure/search-documents": "^13.0.0",
     "@azure/storage-blob": "^12.33.0",
     "@base-ui/react": "^1.8.0",
     "@prisma/adapter-pg": "^7.10.0",
@@ -21,6 +22,7 @@
     "dotenv": "^17.4.2",
     "lucide-react": "^1.45.0",
     "next": "16.3.5",
+    "openai": "^7.15.0",
     "pg": "^8.23.0",
     "prisma": "7.10.0",
     "react": "19.2.8",
