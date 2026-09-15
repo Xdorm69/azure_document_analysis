@@ -1,4 +1,4 @@
-import { UploadZone } from "@/components/features/docuements/upload-zone";
+import { DocumentsWorkspace } from "@/components/features/docuements/documents-workspace";
 
 export default function DashboardPage() {
   return (
@@ -14,7 +14,7 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <UploadZone />
+      <DocumentsWorkspace />
     </main>
   );
 }

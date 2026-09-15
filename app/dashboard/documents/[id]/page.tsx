@@ -1,0 +1,118 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ArrowLeftIcon, FileImageIcon, FileTextIcon } from "lucide-react";
+
+import { prisma } from "@/lib/prisma";
+import { formatBytes, formatRelativeTime } from "@/lib/format";
+import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
+import { AnalysisPanel } from "@/components/features/docuements/analysis-panel";
+import { ExtractedTextPanel } from "@/components/features/docuements/extracted-text-panel";
+import { ChunkList } from "@/components/features/docuements/chunk-list";
+import { RetryAnalysisButton } from "@/components/features/docuements/retry-analysis-button";
+import { AutoRefresh } from "@/components/features/docuements/auto-refresh";
+import { Card, CardContent } from "@/components/ui/card";
+
+export default async function DocumentDetailPage(
+  props: PageProps<"/dashboard/documents/[id]">
+) {
+  const { id } = await props.params;
+
+  const document = await prisma.document.findUnique({
+    where: { id },
+    include: { analysis: true },
+  });
+
+  if (!document) {
+    notFound();
+  }
+
+  const chunks =
+    document.status === "ANALYZED"
+      ? await prisma.documentChunk.findMany({
+          where: { documentId: id },
+          orderBy: { chunkIndex: "asc" },
+          select: {
+            id: true,
+            chunkIndex: true,
+            pageNumber: true,
+            content: true,
+            tokenCount: true,
+          },
+        })
+      : [];
+
+  const isImage = document.mimeType.startsWith("image/");
+  const Icon = isImage ? FileImageIcon : FileTextIcon;
+
+  return (
+    <main className="mx-auto max-w-4xl space-y-6 p-8">
+      <Link
+        href="/dashboard"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeftIcon className="size-4" />
+        Back to documents
+      </Link>
+
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted">
+          <Icon className="size-6 text-muted-foreground" />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-2xl font-semibold">{document.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {formatBytes(document.size)}
+            {document.pageCount ? ` · ${document.pageCount} pages` : ""}
+            {" · uploaded "}
+            {formatRelativeTime(document.createdAt)}
+          </p>
+        </div>
+
+        <DocumentStatusBadge status={document.status} className="shrink-0" />
+      </div>
+
+      {document.status === "FAILED" && (
+        <Card>
+          <CardContent className="flex items-center justify-between gap-4">
+            <p className="text-sm text-destructive">
+              Analysis failed for this document. You can try running it
+              again.
+            </p>
+            <RetryAnalysisButton documentId={document.id} />
+          </CardContent>
+        </Card>
+      )}
+
+      {(document.status === "UPLOADED" || document.status === "PROCESSING") && (
+        <>
+          <AutoRefresh />
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              {document.status === "PROCESSING"
+                ? "Analysis is running — this page will update automatically once it's done."
+                : "This document is queued for analysis."}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {document.status === "ANALYZED" && (
+        <>
+          <AnalysisPanel analysis={document.analysis} />
+
+          {document.extractedText && (
+            <ExtractedTextPanel text={document.extractedText} />
+          )}
+
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">
+              Chunks ({chunks.length})
+            </h2>
+            <ChunkList chunks={chunks} />
+          </div>
+        </>
+      )}
+    </main>
+  );
+}

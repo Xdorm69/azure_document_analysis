@@ -1,3 +1,27 @@
+export type DocumentStatus =
+  | "UPLOADED"
+  | "PROCESSING"
+  | "ANALYZED"
+  | "FAILED";
+
+export type DocumentSummary = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  status: DocumentStatus;
+  pageCount: number | null;
+  createdAt: string;
+};
+
+export type DocumentChunkSummary = {
+  id: string;
+  chunkIndex: number;
+  pageNumber: number | null;
+  content: string;
+  tokenCount: number | null;
+};
+
 export type DocumentLine = {
   content: string;
 };

@@ -1,0 +1,1236 @@
+diff --git a/app/api/documents/route.ts b/app/api/documents/route.ts
+new file mode 100644
+index 0000000..2e7e157
+--- /dev/null
++++ b/app/api/documents/route.ts
+@@ -0,0 +1,19 @@
++import { NextResponse } from "next/server";
++import { prisma } from "@/lib/prisma";
++
++export async function GET() {
++  const documents = await prisma.document.findMany({
++    orderBy: { createdAt: "desc" },
++    select: {
++      id: true,
++      name: true,
++      mimeType: true,
++      size: true,
++      status: true,
++      pageCount: true,
++      createdAt: true,
++    },
++  });
++
++  return NextResponse.json({ documents });
++}
+diff --git a/app/dashboard/documents/[id]/page.tsx b/app/dashboard/documents/[id]/page.tsx
+new file mode 100644
+index 0000000..c8b7201
+--- /dev/null
++++ b/app/dashboard/documents/[id]/page.tsx
+@@ -0,0 +1,118 @@
++import Link from "next/link";
++import { notFound } from "next/navigation";
++import { ArrowLeftIcon, FileImageIcon, FileTextIcon } from "lucide-react";
++
++import { prisma } from "@/lib/prisma";
++import { formatBytes, formatRelativeTime } from "@/lib/format";
++import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
++import { AnalysisPanel } from "@/components/features/docuements/analysis-panel";
++import { ExtractedTextPanel } from "@/components/features/docuements/extracted-text-panel";
++import { ChunkList } from "@/components/features/docuements/chunk-list";
++import { RetryAnalysisButton } from "@/components/features/docuements/retry-analysis-button";
++import { AutoRefresh } from "@/components/features/docuements/auto-refresh";
++import { Card, CardContent } from "@/components/ui/card";
++
++export default async function DocumentDetailPage(
++  props: PageProps<"/dashboard/documents/[id]">
++) {
++  const { id } = await props.params;
++
++  const document = await prisma.document.findUnique({
++    where: { id },
++    include: { analysis: true },
++  });
++
++  if (!document) {
++    notFound();
++  }
++
++  const chunks =
++    document.status === "ANALYZED"
++      ? await prisma.documentChunk.findMany({
++          where: { documentId: id },
++          orderBy: { chunkIndex: "asc" },
++          select: {
++            id: true,
++            chunkIndex: true,
++            pageNumber: true,
++            content: true,
++            tokenCount: true,
++          },
++        })
++      : [];
++
++  const isImage = document.mimeType.startsWith("image/");
++  const Icon = isImage ? FileImageIcon : FileTextIcon;
++
++  return (
++    <main className="mx-auto max-w-4xl space-y-6 p-8">
++      <Link
++        href="/dashboard"
++        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
++      >
++        <ArrowLeftIcon className="size-4" />
++        Back to documents
++      </Link>
++
++      <div className="flex items-start gap-4">
++        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted">
++          <Icon className="size-6 text-muted-foreground" />
++        </div>
++
++        <div className="min-w-0 flex-1">
++          <h1 className="truncate text-2xl font-semibold">{document.name}</h1>
++          <p className="mt-1 text-sm text-muted-foreground">
++            {formatBytes(document.size)}
++            {document.pageCount ? ` · ${document.pageCount} pages` : ""}
++            {" · uploaded "}
++            {formatRelativeTime(document.createdAt)}
++          </p>
++        </div>
++
++        <DocumentStatusBadge status={document.status} className="shrink-0" />
++      </div>
++
++      {document.status === "FAILED" && (
++        <Card>
++          <CardContent className="flex items-center justify-between gap-4">
++            <p className="text-sm text-destructive">
++              Analysis failed for this document. You can try running it
++              again.
++            </p>
++            <RetryAnalysisButton documentId={document.id} />
++          </CardContent>
++        </Card>
++      )}
++
++      {(document.status === "UPLOADED" || document.status === "PROCESSING") && (
++        <>
++          <AutoRefresh />
++          <Card>
++            <CardContent className="py-6 text-center text-sm text-muted-foreground">
++              {document.status === "PROCESSING"
++                ? "Analysis is running — this page will update automatically once it's done."
++                : "This document is queued for analysis."}
++            </CardContent>
++          </Card>
++        </>
++      )}
++
++      {document.status === "ANALYZED" && (
++        <>
++          <AnalysisPanel analysis={document.analysis} />
++
++          {document.extractedText && (
++            <ExtractedTextPanel text={document.extractedText} />
++          )}
++
++          <div>
++            <h2 className="mb-3 text-sm font-medium text-muted-foreground">
++              Chunks ({chunks.length})
++            </h2>
++            <ChunkList chunks={chunks} />
++          </div>
++        </>
++      )}
++    </main>
++  );
++}
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index ca20a4e..3a6b641 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -1,4 +1,4 @@
+-import { UploadZone } from "@/components/features/docuements/upload-zone";
++import { DocumentsWorkspace } from "@/components/features/docuements/documents-workspace";
+ 
+ export default function DashboardPage() {
+   return (
+@@ -14,7 +14,7 @@ export default function DashboardPage() {
+         </p>
+       </div>
+ 
+-      <UploadZone />
++      <DocumentsWorkspace />
+     </main>
+   );
+ }
+\ No newline at end of file
+diff --git a/app/layout.tsx b/app/layout.tsx
+index e78b59f..53f3d3a 100644
+--- a/app/layout.tsx
++++ b/app/layout.tsx
+@@ -2,6 +2,7 @@ import type { Metadata } from "next";
+ import { Geist, Geist_Mono, Inter } from "next/font/google";
+ import "./globals.css";
+ import { cn } from "@/lib/utils";
++import { Header } from "@/components/layout/header";
+ 
+ const inter = Inter({subsets:['latin'],variable:'--font-sans'});
+ 
+@@ -26,7 +27,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
+       lang="en"
+       className={cn("h-full dark", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable)}
+     >
+-      <body className="min-h-full flex flex-col">{children}</body>
++      <body className="flex min-h-full flex-col">
++        <Header />
++        <div className="flex-1">{children}</div>
++      </body>
+     </html>
+   );
+ }
+diff --git a/app/page.tsx b/app/page.tsx
+index a082c29..9cdc478 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -1,9 +1,61 @@
+-import React from 'react'
++import Link from "next/link";
++import { FileSearchIcon, ShieldCheckIcon, ZapIcon } from "lucide-react";
+ 
+-const HomePage = () => {
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++
++const FEATURES = [
++  {
++    icon: ZapIcon,
++    title: "Fast extraction",
++    description:
++      "Upload a PDF or scanned image and get text, tables, and page structure pulled out automatically.",
++  },
++  {
++    icon: FileSearchIcon,
++    title: "Searchable chunks",
++    description:
++      "Every document is split into indexed chunks so you can find exactly what you need.",
++  },
++  {
++    icon: ShieldCheckIcon,
++    title: "Diligence-ready",
++    description:
++      "Built for reviewing contracts and reports — summaries, risks, and key findings in one place.",
++  },
++];
++
++export default function HomePage() {
+   return (
+-    <div>HomePage</div>
+-  )
+-}
++    <main className="mx-auto flex max-w-4xl flex-col items-center px-8 py-24 text-center">
++      <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
++        Document analysis, built for diligence
++      </h1>
+ 
+-export default HomePage
+\ No newline at end of file
++      <p className="mt-4 max-w-xl text-lg text-muted-foreground">
++        Upload contracts, reports, and filings — get extracted text,
++        searchable chunks, and AI-generated insights in one workspace.
++      </p>
++
++      <div className="mt-8">
++        <Button size="lg" render={<Link href="/dashboard" />}>
++          Go to dashboard
++        </Button>
++      </div>
++
++      <div className="mt-20 grid gap-4 sm:grid-cols-3">
++        {FEATURES.map((feature) => (
++          <Card key={feature.title} className="text-left">
++            <CardContent>
++              <feature.icon className="size-5 text-muted-foreground" />
++              <p className="mt-3 text-sm font-medium">{feature.title}</p>
++              <p className="mt-1 text-sm text-muted-foreground">
++                {feature.description}
++              </p>
++            </CardContent>
++          </Card>
++        ))}
++      </div>
++    </main>
++  );
++}
+diff --git a/components/features/docuements/analysis-panel.tsx b/components/features/docuements/analysis-panel.tsx
+new file mode 100644
+index 0000000..1b1be5a
+--- /dev/null
++++ b/components/features/docuements/analysis-panel.tsx
+@@ -0,0 +1,105 @@
++import { SparklesIcon } from "lucide-react";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++
++type AnalysisData = {
++  summary: string | null;
++  keyFindings: unknown;
++  risks: unknown;
++  entities: unknown;
++  actionItems: unknown;
++} | null;
++
++function renderListField(value: unknown) {
++  if (!value) return null;
++
++  const items = Array.isArray(value) ? value : [value];
++  if (items.length === 0) return null;
++
++  return (
++    <ul className="list-disc space-y-1 pl-5 text-sm">
++      {items.map((item, index) => (
++        <li key={index}>
++          {typeof item === "string" ? item : JSON.stringify(item)}
++        </li>
++      ))}
++    </ul>
++  );
++}
++
++export function AnalysisPanel({ analysis }: { analysis: AnalysisData }) {
++  const hasContent =
++    analysis &&
++    (analysis.summary ||
++      analysis.keyFindings ||
++      analysis.risks ||
++      analysis.entities ||
++      analysis.actionItems);
++
++  if (!hasContent) {
++    return (
++      <Card>
++        <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
++          <SparklesIcon className="size-6 text-muted-foreground" />
++          <p className="text-sm font-medium">No AI insights yet</p>
++          <p className="text-sm text-muted-foreground">
++            Summary, risks, and key findings will appear here once
++            diligence analysis is generated for this document.
++          </p>
++        </CardContent>
++      </Card>
++    );
++  }
++
++  return (
++    <div className="space-y-4">
++      {analysis.summary && (
++        <Card>
++          <CardHeader>
++            <CardTitle>Summary</CardTitle>
++          </CardHeader>
++          <CardContent>
++            <p className="text-sm text-muted-foreground">
++              {analysis.summary}
++            </p>
++          </CardContent>
++        </Card>
++      )}
++
++      {!!analysis.risks && (
++        <Card>
++          <CardHeader>
++            <CardTitle>Risks</CardTitle>
++          </CardHeader>
++          <CardContent>{renderListField(analysis.risks)}</CardContent>
++        </Card>
++      )}
++
++      {!!analysis.keyFindings && (
++        <Card>
++          <CardHeader>
++            <CardTitle>Key findings</CardTitle>
++          </CardHeader>
++          <CardContent>{renderListField(analysis.keyFindings)}</CardContent>
++        </Card>
++      )}
++
++      {!!analysis.actionItems && (
++        <Card>
++          <CardHeader>
++            <CardTitle>Action items</CardTitle>
++          </CardHeader>
++          <CardContent>{renderListField(analysis.actionItems)}</CardContent>
++        </Card>
++      )}
++
++      {!!analysis.entities && (
++        <Card>
++          <CardHeader>
++            <CardTitle>Entities</CardTitle>
++          </CardHeader>
++          <CardContent>{renderListField(analysis.entities)}</CardContent>
++        </Card>
++      )}
++    </div>
++  );
++}
+diff --git a/components/features/docuements/auto-refresh.tsx b/components/features/docuements/auto-refresh.tsx
+new file mode 100644
+index 0000000..81b0969
+--- /dev/null
++++ b/components/features/docuements/auto-refresh.tsx
+@@ -0,0 +1,15 @@
++"use client";
++
++import { useEffect } from "react";
++import { useRouter } from "next/navigation";
++
++export function AutoRefresh({ intervalMs = 4000 }: { intervalMs?: number }) {
++  const router = useRouter();
++
++  useEffect(() => {
++    const interval = setInterval(() => router.refresh(), intervalMs);
++    return () => clearInterval(interval);
++  }, [router, intervalMs]);
++
++  return null;
++}
+diff --git a/components/features/docuements/chunk-list.tsx b/components/features/docuements/chunk-list.tsx
+new file mode 100644
+index 0000000..6170b53
+--- /dev/null
++++ b/components/features/docuements/chunk-list.tsx
+@@ -0,0 +1,38 @@
++import { Card, CardContent } from "@/components/ui/card";
++import type { DocumentChunkSummary } from "@/types/document";
++
++export function ChunkList({ chunks }: { chunks: DocumentChunkSummary[] }) {
++  if (chunks.length === 0) {
++    return (
++      <Card>
++        <CardContent className="py-6 text-center text-sm text-muted-foreground">
++          No chunks have been generated for this document yet.
++        </CardContent>
++      </Card>
++    );
++  }
++
++  return (
++    <Card>
++      <CardContent className="divide-y divide-border">
++        {chunks.map((chunk) => (
++          <details key={chunk.id} className="group py-3 first:pt-0 last:pb-0">
++            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm">
++              <span className="font-medium">
++                Chunk {chunk.chunkIndex + 1}
++                {chunk.pageNumber ? ` · Page ${chunk.pageNumber}` : ""}
++              </span>
++              <span className="text-xs text-muted-foreground">
++                {chunk.tokenCount ? `${chunk.tokenCount} tokens` : ""}
++              </span>
++            </summary>
++
++            <p className="mt-2 text-sm whitespace-pre-wrap text-muted-foreground">
++              {chunk.content}
++            </p>
++          </details>
++        ))}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/document-card.tsx b/components/features/docuements/document-card.tsx
+new file mode 100644
+index 0000000..b278acc
+--- /dev/null
++++ b/components/features/docuements/document-card.tsx
+@@ -0,0 +1,36 @@
++import Link from "next/link";
++import { FileImageIcon, FileTextIcon } from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
++import { formatBytes, formatRelativeTime } from "@/lib/format";
++import type { DocumentSummary } from "@/types/document";
++
++export function DocumentCard({ document }: { document: DocumentSummary }) {
++  const isImage = document.mimeType.startsWith("image/");
++  const Icon = isImage ? FileImageIcon : FileTextIcon;
++
++  return (
++    <Link href={`/dashboard/documents/${document.id}`}>
++      <Card className="transition-colors hover:bg-muted/50">
++        <CardContent className="flex flex-row items-center gap-4">
++          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
++            <Icon className="size-5 text-muted-foreground" />
++          </div>
++
++          <div className="min-w-0 flex-1">
++            <p className="truncate text-sm font-medium">{document.name}</p>
++            <p className="mt-0.5 text-xs text-muted-foreground">
++              {formatBytes(document.size)}
++              {document.pageCount ? ` · ${document.pageCount} pages` : ""}
++              {" · "}
++              {formatRelativeTime(document.createdAt)}
++            </p>
++          </div>
++
++          <DocumentStatusBadge status={document.status} className="shrink-0" />
++        </CardContent>
++      </Card>
++    </Link>
++  );
++}
+diff --git a/components/features/docuements/document-list.tsx b/components/features/docuements/document-list.tsx
+new file mode 100644
+index 0000000..a98af1b
+--- /dev/null
++++ b/components/features/docuements/document-list.tsx
+@@ -0,0 +1,55 @@
++import { FileStackIcon } from "lucide-react";
++
++import { DocumentCard } from "@/components/features/docuements/document-card";
++import type { DocumentSummary } from "@/types/document";
++
++export function DocumentList({
++  documents,
++  isLoading,
++  error,
++}: {
++  documents: DocumentSummary[];
++  isLoading: boolean;
++  error: string | null;
++}) {
++  if (isLoading) {
++    return (
++      <div className="space-y-3">
++        {[0, 1, 2].map((i) => (
++          <div
++            key={i}
++            className="h-[72px] animate-pulse rounded-xl bg-muted"
++          />
++        ))}
++      </div>
++    );
++  }
++
++  if (error) {
++    return (
++      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-sm text-destructive">
++        {error}
++      </div>
++    );
++  }
++
++  if (documents.length === 0) {
++    return (
++      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center">
++        <FileStackIcon className="size-8 text-muted-foreground" />
++        <p className="mt-3 text-sm font-medium">No documents yet</p>
++        <p className="mt-1 text-sm text-muted-foreground">
++          Upload a file above to run your first analysis.
++        </p>
++      </div>
++    );
++  }
++
++  return (
++    <div className="space-y-3">
++      {documents.map((document) => (
++        <DocumentCard key={document.id} document={document} />
++      ))}
++    </div>
++  );
++}
+diff --git a/components/features/docuements/document-status-badge.tsx b/components/features/docuements/document-status-badge.tsx
+new file mode 100644
+index 0000000..3515429
+--- /dev/null
++++ b/components/features/docuements/document-status-badge.tsx
+@@ -0,0 +1,60 @@
++import { cn } from "cn";
++import {
++  CheckCircle2Icon,
++  CircleDashedIcon,
++  LoaderCircleIcon,
++  XCircleIcon,
++} from "lucide-react";
++
++import type { DocumentStatus } from "@/types/document";
++
++const STATUS_CONFIG: Record<
++  DocumentStatus,
++  { label: string; className: string; icon: React.ElementType; spin?: boolean }
++> = {
++  UPLOADED: {
++    label: "Queued",
++    className: "bg-muted text-muted-foreground",
++    icon: CircleDashedIcon,
++  },
++  PROCESSING: {
++    label: "Analyzing",
++    className: "bg-accent text-accent-foreground",
++    icon: LoaderCircleIcon,
++    spin: true,
++  },
++  ANALYZED: {
++    label: "Analyzed",
++    className: "bg-primary/10 text-primary",
++    icon: CheckCircle2Icon,
++  },
++  FAILED: {
++    label: "Failed",
++    className: "bg-destructive/10 text-destructive",
++    icon: XCircleIcon,
++  },
++};
++
++export function DocumentStatusBadge({
++  status,
++  className,
++}: {
++  status: DocumentStatus;
++  className?: string;
++}) {
++  const config = STATUS_CONFIG[status];
++  const Icon = config.icon;
++
++  return (
++    <span
++      className={cn(
++        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
++        config.className,
++        className
++      )}
++    >
++      <Icon className={cn("size-3.5", config.spin && "animate-spin")} />
++      {config.label}
++    </span>
++  );
++}
+diff --git a/components/features/docuements/documents-workspace.tsx b/components/features/docuements/documents-workspace.tsx
+new file mode 100644
+index 0000000..cf03f8b
+--- /dev/null
++++ b/components/features/docuements/documents-workspace.tsx
+@@ -0,0 +1,29 @@
++"use client";
++
++import { UploadZone } from "@/components/features/docuements/upload-zone";
++import { DocumentList } from "@/components/features/docuements/document-list";
++import { useDocuments } from "@/components/features/docuements/use-documents";
++
++export function DocumentsWorkspace() {
++  const { documents, isLoading, error, refresh } = useDocuments();
++
++  return (
++    <div className="space-y-8">
++      <UploadZone onUploaded={refresh} />
++
++      <div>
++        <h2 className="mb-4 text-sm font-medium text-muted-foreground">
++          {documents.length > 0
++            ? `${documents.length} document${documents.length === 1 ? "" : "s"}`
++            : "Documents"}
++        </h2>
++
++        <DocumentList
++          documents={documents}
++          isLoading={isLoading}
++          error={error}
++        />
++      </div>
++    </div>
++  );
++}
+diff --git a/components/features/docuements/extracted-text-panel.tsx b/components/features/docuements/extracted-text-panel.tsx
+new file mode 100644
+index 0000000..06c29c8
+--- /dev/null
++++ b/components/features/docuements/extracted-text-panel.tsx
+@@ -0,0 +1,49 @@
++"use client";
++
++import { useState } from "react";
++import { CheckIcon, CopyIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++
++export function ExtractedTextPanel({ text }: { text: string }) {
++  const [isExpanded, setIsExpanded] = useState(false);
++  const [copied, setCopied] = useState(false);
++
++  async function handleCopy() {
++    await navigator.clipboard.writeText(text);
++    setCopied(true);
++    setTimeout(() => setCopied(false), 1500);
++  }
++
++  return (
++    <Card>
++      <CardContent>
++        <div className="mb-2 flex items-center justify-between">
++          <p className="text-sm font-medium">Extracted text</p>
++          <Button variant="ghost" size="sm" onClick={handleCopy}>
++            {copied ? <CheckIcon /> : <CopyIcon />}
++            {copied ? "Copied" : "Copy"}
++          </Button>
++        </div>
++
++        <pre
++          className={`overflow-auto rounded-lg bg-muted p-4 text-xs whitespace-pre-wrap text-muted-foreground ${
++            isExpanded ? "max-h-none" : "max-h-64"
++          }`}
++        >
++          {text}
++        </pre>
++
++        <Button
++          variant="link"
++          size="sm"
++          className="mt-1 px-0"
++          onClick={() => setIsExpanded((prev) => !prev)}
++        >
++          {isExpanded ? "Show less" : "Show full text"}
++        </Button>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/retry-analysis-button.tsx b/components/features/docuements/retry-analysis-button.tsx
+new file mode 100644
+index 0000000..7eeedd8
+--- /dev/null
++++ b/components/features/docuements/retry-analysis-button.tsx
+@@ -0,0 +1,54 @@
++"use client";
++
++import { useState } from "react";
++import { useRouter } from "next/navigation";
++import { LoaderCircleIcon, RotateCwIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++
++export function RetryAnalysisButton({ documentId }: { documentId: string }) {
++  const [isRetrying, setIsRetrying] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const router = useRouter();
++
++  async function handleRetry() {
++    setIsRetrying(true);
++    setError(null);
++
++    try {
++      const response = await fetch(`/api/documents/${documentId}/analyze`, {
++        method: "POST",
++      });
++
++      const data = await response.json();
++
++      if (!response.ok) {
++        throw new Error(data.error ?? "Analysis failed");
++      }
++
++      router.refresh();
++    } catch (caughtError) {
++      setError(
++        caughtError instanceof Error
++          ? caughtError.message
++          : "Analysis failed"
++      );
++    } finally {
++      setIsRetrying(false);
++    }
++  }
++
++  return (
++    <div className="flex items-center gap-3">
++      <Button variant="outline" size="sm" onClick={handleRetry} disabled={isRetrying}>
++        {isRetrying ? (
++          <LoaderCircleIcon className="animate-spin" />
++        ) : (
++          <RotateCwIcon />
++        )}
++        {isRetrying ? "Retrying..." : "Retry analysis"}
++      </Button>
++      {error && <p className="text-sm text-destructive">{error}</p>}
++    </div>
++  );
++}
+diff --git a/components/features/docuements/upload-zone.tsx b/components/features/docuements/upload-zone.tsx
+index 1ea4139..1fd76d0 100644
+--- a/components/features/docuements/upload-zone.tsx
++++ b/components/features/docuements/upload-zone.tsx
+@@ -1,135 +1,198 @@
+ "use client";
+ 
+-import { useState } from "react";
+-
+-export function UploadZone() {
+-  const [file, setFile] =
+-    useState<File | null>(null);
+-
+-  const [uploading, setUploading] =
+-    useState(false);
+-
+-  const [analyzing, setAnalyzing] =
+-    useState(false);
++import { useCallback, useRef, useState } from "react";
++import {
++  AlertCircleIcon,
++  CheckCircle2Icon,
++  FileIcon,
++  LoaderCircleIcon,
++  UploadCloudIcon,
++  XIcon,
++} from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++import { formatBytes } from "@/lib/format";
++
++const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
++
++type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
++
++export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
++  const [file, setFile] = useState<File | null>(null);
++  const [state, setState] = useState<UploadState>("idle");
++  const [message, setMessage] = useState("");
++  const [isDragging, setIsDragging] = useState(false);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  const reset = useCallback(() => {
++    setFile(null);
++    setState("idle");
++    setMessage("");
++  }, []);
+ 
+-  const [message, setMessage] =
+-    useState("");
++  function selectFile(nextFile: File | null) {
++    setFile(nextFile);
++    setState("idle");
++    setMessage("");
++  }
+ 
+   async function handleUpload() {
+     if (!file) return;
+ 
+-    setUploading(true);
+-    setMessage("");
++    setState("uploading");
++    setMessage("Uploading document...");
+ 
+     try {
+       const formData = new FormData();
+-
+       formData.append("file", file);
+ 
+-      const uploadResponse =
+-        await fetch(
+-          "/api/documents/upload",
+-          {
+-            method: "POST",
+-            body: formData,
+-          }
+-        );
++      const uploadResponse = await fetch("/api/documents/upload", {
++        method: "POST",
++        body: formData,
++      });
+ 
+-      const uploadData =
+-        await uploadResponse.json();
++      const uploadData = await uploadResponse.json();
+ 
+       if (!uploadResponse.ok) {
+-        throw new Error(
+-          uploadData.error
+-        );
++        throw new Error(uploadData.error ?? "Upload failed");
+       }
+ 
+-      const documentId =
+-        uploadData.document.id;
++      const documentId = uploadData.document.id;
+ 
+-      setUploading(false);
+-      setAnalyzing(true);
++      setState("analyzing");
++      setMessage("Document uploaded. Running analysis...");
++      onUploaded?.();
+ 
+-      setMessage(
+-        "Document uploaded. Analyzing..."
++      const analysisResponse = await fetch(
++        `/api/documents/${documentId}/analyze`,
++        { method: "POST" }
+       );
+ 
+-      const analysisResponse =
+-        await fetch(
+-          `/api/documents/${documentId}/analyze`,
+-          {
+-            method: "POST",
+-          }
+-        );
+-
+-      const analysisData =
+-        await analysisResponse.json();
++      const analysisData = await analysisResponse.json();
+ 
+       if (!analysisResponse.ok) {
+-        throw new Error(
+-          analysisData.error
+-        );
++        throw new Error(analysisData.error ?? "Analysis failed");
+       }
+ 
+-      setAnalyzing(false);
+-
++      setState("done");
+       setMessage(
+-        `Analysis complete — ${analysisData.document.pageCount} pages processed.`
++        `Analysis complete — ${analysisData.document.pageCount} page${
++          analysisData.document.pageCount === 1 ? "" : "s"
++        } processed.`
+       );
+-
+-      setFile(null);
++      onUploaded?.();
+     } catch (error) {
+-      setUploading(false);
+-      setAnalyzing(false);
+-
++      setState("error");
+       setMessage(
+-        error instanceof Error
+-          ? error.message
+-          : "Something went wrong"
++        error instanceof Error ? error.message : "Something went wrong"
+       );
++      onUploaded?.();
+     }
+   }
+ 
++  const isBusy = state === "uploading" || state === "analyzing";
++
+   return (
+     <div className="space-y-4 rounded-xl border p-6">
+-
+-      <input
+-        type="file"
+-        accept=".pdf,.png,.jpg,.jpeg"
+-        onChange={(event) =>
+-          setFile(
+-            event.target.files?.[0] ?? null
+-          )
+-        }
+-      />
+-
+-      {file && (
+-        <div className="text-sm">
+-          Selected: {file.name}
+-        </div>
+-      )}
+-
+-      <button
+-        onClick={handleUpload}
+-        disabled={
+-          !file ||
+-          uploading ||
+-          analyzing
+-        }
+-        className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-50"
++      <div
++        onDragOver={(event) => {
++          event.preventDefault();
++          if (!isBusy) setIsDragging(true);
++        }}
++        onDragLeave={() => setIsDragging(false)}
++        onDrop={(event) => {
++          event.preventDefault();
++          setIsDragging(false);
++          if (isBusy) return;
++          const dropped = event.dataTransfer.files?.[0];
++          if (dropped) selectFile(dropped);
++        }}
++        onClick={() => !isBusy && inputRef.current?.click()}
++        role="button"
++        tabIndex={0}
++        onKeyDown={(event) => {
++          if (event.key === "Enter" || event.key === " ") {
++            inputRef.current?.click();
++          }
++        }}
++        className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-10 text-center transition-colors ${
++          isBusy
++            ? "cursor-not-allowed opacity-60"
++            : "cursor-pointer hover:bg-muted/50"
++        } ${isDragging ? "border-primary bg-muted/50" : ""}`}
+       >
+-        {uploading
+-          ? "Uploading..."
+-          : analyzing
+-            ? "Analyzing..."
+-            : "Upload & Analyze"}
+-      </button>
++        <input
++          ref={inputRef}
++          type="file"
++          accept={ACCEPTED_TYPES}
++          className="hidden"
++          disabled={isBusy}
++          onChange={(event) =>
++            selectFile(event.target.files?.[0] ?? null)
++          }
++        />
++
++        {file ? (
++          <>
++            <FileIcon className="size-6 text-muted-foreground" />
++            <p className="text-sm font-medium">{file.name}</p>
++            <p className="text-xs text-muted-foreground">
++              {formatBytes(file.size)}
++            </p>
++          </>
++        ) : (
++          <>
++            <UploadCloudIcon className="size-6 text-muted-foreground" />
++            <p className="text-sm font-medium">
++              Drop a document here or click to browse
++            </p>
++            <p className="text-xs text-muted-foreground">
++              PDF, PNG, or JPEG — up to 20MB
++            </p>
++          </>
++        )}
++      </div>
++
++      <div className="flex items-center gap-2">
++        <Button
++          onClick={handleUpload}
++          disabled={!file || isBusy || state === "done"}
++        >
++          {isBusy && <LoaderCircleIcon className="animate-spin" />}
++          {state === "uploading"
++            ? "Uploading..."
++            : state === "analyzing"
++              ? "Analyzing..."
++              : "Upload & Analyze"}
++        </Button>
++
++        {file && !isBusy && (
++          <Button variant="ghost" size="icon" onClick={reset}>
++            <XIcon />
++            <span className="sr-only">Clear selection</span>
++          </Button>
++        )}
++
++        {state === "done" && (
++          <Button variant="outline" onClick={reset}>
++            Upload another
++          </Button>
++        )}
++      </div>
+ 
+       {message && (
+-        <p className="text-sm">
++        <p
++          className={`flex items-center gap-1.5 text-sm ${
++            state === "error" ? "text-destructive" : "text-muted-foreground"
++          }`}
++        >
++          {state === "error" && <AlertCircleIcon className="size-4 shrink-0" />}
++          {state === "done" && (
++            <CheckCircle2Icon className="size-4 shrink-0 text-primary" />
++          )}
+           {message}
+         </p>
+       )}
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/features/docuements/use-documents.ts b/components/features/docuements/use-documents.ts
+new file mode 100644
+index 0000000..7359702
+--- /dev/null
++++ b/components/features/docuements/use-documents.ts
+@@ -0,0 +1,54 @@
++"use client";
++
++import { useCallback, useEffect, useState } from "react";
++import type { DocumentSummary } from "@/types/document";
++
++export function useDocuments() {
++  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
++  const [isLoading, setIsLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  const refresh = useCallback(async () => {
++    setError(null);
++
++    try {
++      const response = await fetch("/api/documents");
++
++      if (!response.ok) {
++        throw new Error("Failed to load documents");
++      }
++
++      const data = await response.json();
++      setDocuments(data.documents);
++    } catch (caughtError) {
++      setError(
++        caughtError instanceof Error
++          ? caughtError.message
++          : "Failed to load documents"
++      );
++    } finally {
++      setIsLoading(false);
++    }
++  }, []);
++
++  useEffect(() => {
++    // Standard fetch-on-mount: `refresh` sets loading/error/data state
++    // as part of loading the initial list, not in response to a prop change.
++    // eslint-disable-next-line react-hooks/set-state-in-effect
++    refresh();
++  }, [refresh]);
++
++  const hasActiveWork = documents.some(
++    (document) =>
++      document.status === "UPLOADED" || document.status === "PROCESSING"
++  );
++
++  useEffect(() => {
++    if (!hasActiveWork) return;
++
++    const interval = setInterval(refresh, 5000);
++    return () => clearInterval(interval);
++  }, [hasActiveWork, refresh]);
++
++  return { documents, isLoading, error, refresh };
++}
+diff --git a/components/layout/header.tsx b/components/layout/header.tsx
+new file mode 100644
+index 0000000..0d51a89
+--- /dev/null
++++ b/components/layout/header.tsx
+@@ -0,0 +1,31 @@
++import Link from "next/link";
++import { ScanSearchIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++
++export function Header() {
++  return (
++    <header className="border-b">
++      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-8">
++        <Link href="/" className="flex items-center gap-2 font-medium">
++          <ScanSearchIcon className="size-5" />
++          Document Analyzer
++        </Link>
++
++        <nav className="flex items-center gap-4">
++          <Link
++            href="/dashboard"
++            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
++          >
++            Dashboard
++          </Link>
++
++          {/* TODO: wire up Clerk auth — placeholder for now */}
++          <Button variant="outline" size="sm" disabled>
++            Sign in
++          </Button>
++        </nav>
++      </div>
++    </header>
++  );
++}
+diff --git a/lib/format.ts b/lib/format.ts
+new file mode 100644
+index 0000000..c68b761
+--- /dev/null
++++ b/lib/format.ts
+@@ -0,0 +1,44 @@
++export function formatBytes(bytes: number): string {
++  if (bytes === 0) return "0 B";
++
++  const units = ["B", "KB", "MB", "GB"];
++  const exponent = Math.min(
++    Math.floor(Math.log(bytes) / Math.log(1024)),
++    units.length - 1
++  );
++
++  const value = bytes / 1024 ** exponent;
++
++  return `${exponent === 0 ? value : value.toFixed(1)} ${units[exponent]}`;
++}
++
++export function formatRelativeTime(date: Date | string): string {
++  const target = typeof date === "string" ? new Date(date) : date;
++  const diffMs = target.getTime() - Date.now();
++  const diffSeconds = Math.round(diffMs / 1000);
++
++  const divisions: { amount: number; unit: Intl.RelativeTimeFormatUnit }[] = [
++    { amount: 60, unit: "seconds" },
++    { amount: 60, unit: "minutes" },
++    { amount: 24, unit: "hours" },
++    { amount: 7, unit: "days" },
++    { amount: 4.34524, unit: "weeks" },
++    { amount: 12, unit: "months" },
++    { amount: Number.POSITIVE_INFINITY, unit: "years" },
++  ];
++
++  const formatter = new Intl.RelativeTimeFormat(undefined, {
++    numeric: "auto",
++  });
++
++  let duration = diffSeconds;
++
++  for (const division of divisions) {
++    if (Math.abs(duration) < division.amount) {
++      return formatter.format(Math.round(duration), division.unit);
++    }
++    duration /= division.amount;
++  }
++
++  return formatter.format(Math.round(duration), "years");
++}
+diff --git a/types/document.ts b/types/document.ts
+index cd5dde8..345e332 100644
+--- a/types/document.ts
++++ b/types/document.ts
+@@ -1,3 +1,27 @@
++export type DocumentStatus =
++  | "UPLOADED"
++  | "PROCESSING"
++  | "ANALYZED"
++  | "FAILED";
++
++export type DocumentSummary = {
++  id: string;
++  name: string;
++  mimeType: string;
++  size: number;
++  status: DocumentStatus;
++  pageCount: number | null;
++  createdAt: string;
++};
++
++export type DocumentChunkSummary = {
++  id: string;
++  chunkIndex: number;
++  pageNumber: number | null;
++  content: string;
++  tokenCount: number | null;
++};
++
+ export type DocumentLine = {
+   content: string;
+ };
