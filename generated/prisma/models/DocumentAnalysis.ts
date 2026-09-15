@@ -20,14 +20,25 @@ export type DocumentAnalysisModel = runtime.Types.Result.DefaultSelection<Prisma
 
 export type AggregateDocumentAnalysis = {
   _count: DocumentAnalysisCountAggregateOutputType | null
+  _avg: DocumentAnalysisAvgAggregateOutputType | null
+  _sum: DocumentAnalysisSumAggregateOutputType | null
   _min: DocumentAnalysisMinAggregateOutputType | null
   _max: DocumentAnalysisMaxAggregateOutputType | null
+}
+
+export type DocumentAnalysisAvgAggregateOutputType = {
+  riskScore: number | null
+}
+
+export type DocumentAnalysisSumAggregateOutputType = {
+  riskScore: number | null
 }
 
 export type DocumentAnalysisMinAggregateOutputType = {
   id: string | null
   documentId: string | null
   summary: string | null
+  riskScore: number | null
   model: string | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -37,6 +48,7 @@ export type DocumentAnalysisMaxAggregateOutputType = {
   id: string | null
   documentId: string | null
   summary: string | null
+  riskScore: number | null
   model: string | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -48,6 +60,7 @@ export type DocumentAnalysisCountAggregateOutputType = {
   summary: number
   keyFindings: number
   risks: number
+  riskScore: number
   entities: number
   importantDates: number
   importantNumbers: number
@@ -59,10 +72,19 @@ export type DocumentAnalysisCountAggregateOutputType = {
 }
 
 
+export type DocumentAnalysisAvgAggregateInputType = {
+  riskScore?: true
+}
+
+export type DocumentAnalysisSumAggregateInputType = {
+  riskScore?: true
+}
+
 export type DocumentAnalysisMinAggregateInputType = {
   id?: true
   documentId?: true
   summary?: true
+  riskScore?: true
   model?: true
   createdAt?: true
   updatedAt?: true
@@ -72,6 +94,7 @@ export type DocumentAnalysisMaxAggregateInputType = {
   id?: true
   documentId?: true
   summary?: true
+  riskScore?: true
   model?: true
   createdAt?: true
   updatedAt?: true
@@ -83,6 +106,7 @@ export type DocumentAnalysisCountAggregateInputType = {
   summary?: true
   keyFindings?: true
   risks?: true
+  riskScore?: true
   entities?: true
   importantDates?: true
   importantNumbers?: true
@@ -131,6 +155,18 @@ export type DocumentAnalysisAggregateArgs<ExtArgs extends runtime.Types.Extensio
   /**
    * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
    * 
+   * Select which fields to average
+  **/
+  _avg?: DocumentAnalysisAvgAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
+   * Select which fields to sum
+  **/
+  _sum?: DocumentAnalysisSumAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
    * Select which fields to find the minimum value
   **/
   _min?: DocumentAnalysisMinAggregateInputType
@@ -161,6 +197,8 @@ export type DocumentAnalysisGroupByArgs<ExtArgs extends runtime.Types.Extensions
   take?: number
   skip?: number
   _count?: DocumentAnalysisCountAggregateInputType | true
+  _avg?: DocumentAnalysisAvgAggregateInputType
+  _sum?: DocumentAnalysisSumAggregateInputType
   _min?: DocumentAnalysisMinAggregateInputType
   _max?: DocumentAnalysisMaxAggregateInputType
 }
@@ -171,6 +209,7 @@ export type DocumentAnalysisGroupByOutputType = {
   summary: string | null
   keyFindings: runtime.JsonValue | null
   risks: runtime.JsonValue | null
+  riskScore: number | null
   entities: runtime.JsonValue | null
   importantDates: runtime.JsonValue | null
   importantNumbers: runtime.JsonValue | null
@@ -179,6 +218,8 @@ export type DocumentAnalysisGroupByOutputType = {
   createdAt: Date
   updatedAt: Date
   _count: DocumentAnalysisCountAggregateOutputType | null
+  _avg: DocumentAnalysisAvgAggregateOutputType | null
+  _sum: DocumentAnalysisSumAggregateOutputType | null
   _min: DocumentAnalysisMinAggregateOutputType | null
   _max: DocumentAnalysisMaxAggregateOutputType | null
 }
@@ -207,6 +248,7 @@ export type DocumentAnalysisWhereInput = {
   summary?: Prisma.StringNullableFilter<"DocumentAnalysis"> | string | null
   keyFindings?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  riskScore?: Prisma.IntNullableFilter<"DocumentAnalysis"> | number | null
   entities?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   importantDates?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   importantNumbers?: Prisma.JsonNullableFilter<"DocumentAnalysis">
@@ -223,6 +265,7 @@ export type DocumentAnalysisOrderByWithRelationInput = {
   summary?: Prisma.SortOrderInput | Prisma.SortOrder
   keyFindings?: Prisma.SortOrderInput | Prisma.SortOrder
   risks?: Prisma.SortOrderInput | Prisma.SortOrder
+  riskScore?: Prisma.SortOrderInput | Prisma.SortOrder
   entities?: Prisma.SortOrderInput | Prisma.SortOrder
   importantDates?: Prisma.SortOrderInput | Prisma.SortOrder
   importantNumbers?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -242,6 +285,7 @@ export type DocumentAnalysisWhereUniqueInput = Prisma.AtLeast<{
   summary?: Prisma.StringNullableFilter<"DocumentAnalysis"> | string | null
   keyFindings?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableFilter<"DocumentAnalysis">
+  riskScore?: Prisma.IntNullableFilter<"DocumentAnalysis"> | number | null
   entities?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   importantDates?: Prisma.JsonNullableFilter<"DocumentAnalysis">
   importantNumbers?: Prisma.JsonNullableFilter<"DocumentAnalysis">
@@ -258,6 +302,7 @@ export type DocumentAnalysisOrderByWithAggregationInput = {
   summary?: Prisma.SortOrderInput | Prisma.SortOrder
   keyFindings?: Prisma.SortOrderInput | Prisma.SortOrder
   risks?: Prisma.SortOrderInput | Prisma.SortOrder
+  riskScore?: Prisma.SortOrderInput | Prisma.SortOrder
   entities?: Prisma.SortOrderInput | Prisma.SortOrder
   importantDates?: Prisma.SortOrderInput | Prisma.SortOrder
   importantNumbers?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -266,8 +311,10 @@ export type DocumentAnalysisOrderByWithAggregationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.DocumentAnalysisCountOrderByAggregateInput
+  _avg?: Prisma.DocumentAnalysisAvgOrderByAggregateInput
   _max?: Prisma.DocumentAnalysisMaxOrderByAggregateInput
   _min?: Prisma.DocumentAnalysisMinOrderByAggregateInput
+  _sum?: Prisma.DocumentAnalysisSumOrderByAggregateInput
 }
 
 export type DocumentAnalysisScalarWhereWithAggregatesInput = {
@@ -279,6 +326,7 @@ export type DocumentAnalysisScalarWhereWithAggregatesInput = {
   summary?: Prisma.StringNullableWithAggregatesFilter<"DocumentAnalysis"> | string | null
   keyFindings?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   risks?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
+  riskScore?: Prisma.IntNullableWithAggregatesFilter<"DocumentAnalysis"> | number | null
   entities?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   importantDates?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
   importantNumbers?: Prisma.JsonNullableWithAggregatesFilter<"DocumentAnalysis">
@@ -293,6 +341,7 @@ export type DocumentAnalysisCreateInput = {
   summary?: string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -309,6 +358,7 @@ export type DocumentAnalysisUncheckedCreateInput = {
   summary?: string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -323,6 +373,7 @@ export type DocumentAnalysisUpdateInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -339,6 +390,7 @@ export type DocumentAnalysisUncheckedUpdateInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -354,6 +406,7 @@ export type DocumentAnalysisCreateManyInput = {
   summary?: string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -368,6 +421,7 @@ export type DocumentAnalysisUpdateManyMutationInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -383,6 +437,7 @@ export type DocumentAnalysisUncheckedUpdateManyInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -403,6 +458,7 @@ export type DocumentAnalysisCountOrderByAggregateInput = {
   summary?: Prisma.SortOrder
   keyFindings?: Prisma.SortOrder
   risks?: Prisma.SortOrder
+  riskScore?: Prisma.SortOrder
   entities?: Prisma.SortOrder
   importantDates?: Prisma.SortOrder
   importantNumbers?: Prisma.SortOrder
@@ -412,10 +468,15 @@ export type DocumentAnalysisCountOrderByAggregateInput = {
   updatedAt?: Prisma.SortOrder
 }
 
+export type DocumentAnalysisAvgOrderByAggregateInput = {
+  riskScore?: Prisma.SortOrder
+}
+
 export type DocumentAnalysisMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   documentId?: Prisma.SortOrder
   summary?: Prisma.SortOrder
+  riskScore?: Prisma.SortOrder
   model?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -425,9 +486,14 @@ export type DocumentAnalysisMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   documentId?: Prisma.SortOrder
   summary?: Prisma.SortOrder
+  riskScore?: Prisma.SortOrder
   model?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+}
+
+export type DocumentAnalysisSumOrderByAggregateInput = {
+  riskScore?: Prisma.SortOrder
 }
 
 export type DocumentAnalysisCreateNestedOneWithoutDocumentInput = {
@@ -467,6 +533,7 @@ export type DocumentAnalysisCreateWithoutDocumentInput = {
   summary?: string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -481,6 +548,7 @@ export type DocumentAnalysisUncheckedCreateWithoutDocumentInput = {
   summary?: string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -511,6 +579,7 @@ export type DocumentAnalysisUpdateWithoutDocumentInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -525,6 +594,7 @@ export type DocumentAnalysisUncheckedUpdateWithoutDocumentInput = {
   summary?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   keyFindings?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   risks?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  riskScore?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   entities?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantDates?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   importantNumbers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
@@ -542,6 +612,7 @@ export type DocumentAnalysisSelect<ExtArgs extends runtime.Types.Extensions.Inte
   summary?: boolean
   keyFindings?: boolean
   risks?: boolean
+  riskScore?: boolean
   entities?: boolean
   importantDates?: boolean
   importantNumbers?: boolean
@@ -558,6 +629,7 @@ export type DocumentAnalysisSelectCreateManyAndReturn<ExtArgs extends runtime.Ty
   summary?: boolean
   keyFindings?: boolean
   risks?: boolean
+  riskScore?: boolean
   entities?: boolean
   importantDates?: boolean
   importantNumbers?: boolean
@@ -574,6 +646,7 @@ export type DocumentAnalysisSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
   summary?: boolean
   keyFindings?: boolean
   risks?: boolean
+  riskScore?: boolean
   entities?: boolean
   importantDates?: boolean
   importantNumbers?: boolean
@@ -590,6 +663,7 @@ export type DocumentAnalysisSelectScalar = {
   summary?: boolean
   keyFindings?: boolean
   risks?: boolean
+  riskScore?: boolean
   entities?: boolean
   importantDates?: boolean
   importantNumbers?: boolean
@@ -599,7 +673,7 @@ export type DocumentAnalysisSelectScalar = {
   updatedAt?: boolean
 }
 
-export type DocumentAnalysisOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "documentId" | "summary" | "keyFindings" | "risks" | "entities" | "importantDates" | "importantNumbers" | "actionItems" | "model" | "createdAt" | "updatedAt", ExtArgs["result"]["documentAnalysis"]>
+export type DocumentAnalysisOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "documentId" | "summary" | "keyFindings" | "risks" | "riskScore" | "entities" | "importantDates" | "importantNumbers" | "actionItems" | "model" | "createdAt" | "updatedAt", ExtArgs["result"]["documentAnalysis"]>
 export type DocumentAnalysisInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   document?: boolean | Prisma.DocumentDefaultArgs<ExtArgs>
 }
@@ -621,6 +695,7 @@ export type $DocumentAnalysisPayload<ExtArgs extends runtime.Types.Extensions.In
     summary: string | null
     keyFindings: runtime.JsonValue | null
     risks: runtime.JsonValue | null
+    riskScore: number | null
     entities: runtime.JsonValue | null
     importantDates: runtime.JsonValue | null
     importantNumbers: runtime.JsonValue | null
@@ -1057,6 +1132,7 @@ export interface DocumentAnalysisFieldRefs {
   readonly summary: Prisma.FieldRef<"DocumentAnalysis", 'String'>
   readonly keyFindings: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly risks: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
+  readonly riskScore: Prisma.FieldRef<"DocumentAnalysis", 'Int'>
   readonly entities: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly importantDates: Prisma.FieldRef<"DocumentAnalysis", 'Json'>
   readonly importantNumbers: Prisma.FieldRef<"DocumentAnalysis", 'Json'>

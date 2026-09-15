@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ScanSearchIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import {SignInButton} from "@clerk/nextjs";
 
 export function Header() {
   return (
@@ -20,10 +20,7 @@ export function Header() {
             Dashboard
           </Link>
 
-          {/* TODO: wire up Clerk auth — placeholder for now */}
-          <Button variant="outline" size="sm" disabled>
-            Sign in
-          </Button>
+          <SignInButton />
         </nav>
       </div>
     </header>

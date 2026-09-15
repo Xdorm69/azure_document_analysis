@@ -802,6 +802,7 @@ export const DocumentAnalysisScalarFieldEnum = {
   summary: 'summary',
   keyFindings: 'keyFindings',
   risks: 'risks',
+  riskScore: 'riskScore',
   entities: 'entities',
   importantDates: 'importantDates',
   importantNumbers: 'importantNumbers',
