@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Header } from "@/components/layout/header";
+import { Footer } from "@/components/layout/footer";
 import { Providers } from "@/app/providers";
 import { ClerkProvider } from '@clerk/nextjs'
 
@@ -19,15 +20,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Azure Document Analysis",
-  description: "azure_document_analysis",
+  title: "Dilligence.AI",
+  description: "AI-powered document analysis for diligence and review.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={cn("h-full dark", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable)}
+      className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable)}
     >
       <body className="flex min-h-full flex-col">
         <ClerkProvider afterSignOutUrl={'/'}>
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Providers>
             <Header />
             <div className="flex-1">{children}</div>
+            <Footer />
           </Providers>
         </ClerkProvider>
       </body>

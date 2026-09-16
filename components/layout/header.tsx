@@ -6,22 +6,32 @@ import {
   UserButton,
 } from "@clerk/nextjs";
 
+const NAV_LINKS = [
+  { href: "/", label: "Home" },
+  { href: "/about", label: "About" },
+  { href: "/contact", label: "Contact" },
+  { href: "/dashboard", label: "Dashboard" },
+];
+
 export function Header() {
   return (
-    <header className="border-b">
+    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-8">
         <Link href="/" className="flex items-center gap-2 font-medium">
           <ScanSearchIcon className="size-5" />
-          Document Analyzer
+          Dilligence.AI
         </Link>
 
         <nav className="flex items-center gap-4">
-          <Link
-            href="/dashboard"
-            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Dashboard
-          </Link>
+          {NAV_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {link.label}
+            </Link>
+          ))}
 
           <Show when="signed-out">
             <SignInButton

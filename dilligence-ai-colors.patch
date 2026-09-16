@@ -1,0 +1,167 @@
+From b407d6478a3295d3b1812004b942ccdfeb282218 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Wed, 16 Sep 2026 05:49:04 +0000
+Subject: [PATCH] Add mild brand color palette and secondary hero glow
+
+---
+ app/globals.css | 124 ++++++++++++++++++++++++------------------------
+ app/page.tsx    |   4 ++
+ 2 files changed, 66 insertions(+), 62 deletions(-)
+
+diff --git a/app/globals.css b/app/globals.css
+index 6f7ca26..030ba74 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -48,72 +48,72 @@
+ }
+ 
+ :root {
+-  --background: oklch(1 0 0);
+-  --foreground: oklch(0.145 0 0);
+-  --card: oklch(1 0 0);
+-  --card-foreground: oklch(0.145 0 0);
+-  --popover: oklch(1 0 0);
+-  --popover-foreground: oklch(0.145 0 0);
+-  --primary: oklch(0.205 0 0);
+-  --primary-foreground: oklch(0.985 0 0);
+-  --secondary: oklch(0.97 0 0);
+-  --secondary-foreground: oklch(0.205 0 0);
+-  --muted: oklch(0.97 0 0);
+-  --muted-foreground: oklch(0.556 0 0);
+-  --accent: oklch(0.97 0 0);
+-  --accent-foreground: oklch(0.205 0 0);
+-  --destructive: oklch(0.577 0.245 27.325);
+-  --border: oklch(0.922 0 0);
+-  --input: oklch(0.922 0 0);
+-  --ring: oklch(0.708 0 0);
+-  --chart-1: oklch(0.87 0 0);
+-  --chart-2: oklch(0.556 0 0);
+-  --chart-3: oklch(0.439 0 0);
+-  --chart-4: oklch(0.371 0 0);
+-  --chart-5: oklch(0.269 0 0);
++  --background: oklch(0.99 0.004 260);
++  --foreground: oklch(0.18 0.015 260);
++  --card: oklch(1 0.003 260);
++  --card-foreground: oklch(0.18 0.015 260);
++  --popover: oklch(1 0.003 260);
++  --popover-foreground: oklch(0.18 0.015 260);
++  --primary: oklch(0.52 0.14 258);
++  --primary-foreground: oklch(0.98 0.01 260);
++  --secondary: oklch(0.96 0.012 260);
++  --secondary-foreground: oklch(0.3 0.03 258);
++  --muted: oklch(0.96 0.01 260);
++  --muted-foreground: oklch(0.5 0.02 260);
++  --accent: oklch(0.93 0.03 258);
++  --accent-foreground: oklch(0.3 0.05 258);
++  --destructive: oklch(0.577 0.19 25);
++  --border: oklch(0.9 0.012 260);
++  --input: oklch(0.9 0.012 260);
++  --ring: oklch(0.65 0.1 258);
++  --chart-1: oklch(0.65 0.14 258);
++  --chart-2: oklch(0.68 0.12 195);
++  --chart-3: oklch(0.62 0.13 300);
++  --chart-4: oklch(0.75 0.13 70);
++  --chart-5: oklch(0.65 0.16 20);
+   --radius: 0.625rem;
+-  --sidebar: oklch(0.985 0 0);
+-  --sidebar-foreground: oklch(0.145 0 0);
+-  --sidebar-primary: oklch(0.205 0 0);
+-  --sidebar-primary-foreground: oklch(0.985 0 0);
+-  --sidebar-accent: oklch(0.97 0 0);
+-  --sidebar-accent-foreground: oklch(0.205 0 0);
+-  --sidebar-border: oklch(0.922 0 0);
+-  --sidebar-ring: oklch(0.708 0 0);
++  --sidebar: oklch(0.98 0.006 260);
++  --sidebar-foreground: oklch(0.18 0.015 260);
++  --sidebar-primary: oklch(0.52 0.14 258);
++  --sidebar-primary-foreground: oklch(0.98 0.01 260);
++  --sidebar-accent: oklch(0.93 0.03 258);
++  --sidebar-accent-foreground: oklch(0.3 0.05 258);
++  --sidebar-border: oklch(0.9 0.012 260);
++  --sidebar-ring: oklch(0.65 0.1 258);
+ }
+ 
+ .dark {
+-  --background: oklch(0.145 0 0);
+-  --foreground: oklch(0.985 0 0);
+-  --card: oklch(0.205 0 0);
+-  --card-foreground: oklch(0.985 0 0);
+-  --popover: oklch(0.205 0 0);
+-  --popover-foreground: oklch(0.985 0 0);
+-  --primary: oklch(0.922 0 0);
+-  --primary-foreground: oklch(0.205 0 0);
+-  --secondary: oklch(0.269 0 0);
+-  --secondary-foreground: oklch(0.985 0 0);
+-  --muted: oklch(0.269 0 0);
+-  --muted-foreground: oklch(0.708 0 0);
+-  --accent: oklch(0.269 0 0);
+-  --accent-foreground: oklch(0.985 0 0);
+-  --destructive: oklch(0.704 0.191 22.216);
+-  --border: oklch(1 0 0 / 10%);
+-  --input: oklch(1 0 0 / 15%);
+-  --ring: oklch(0.556 0 0);
+-  --chart-1: oklch(0.87 0 0);
+-  --chart-2: oklch(0.556 0 0);
+-  --chart-3: oklch(0.439 0 0);
+-  --chart-4: oklch(0.371 0 0);
+-  --chart-5: oklch(0.269 0 0);
+-  --sidebar: oklch(0.205 0 0);
+-  --sidebar-foreground: oklch(0.985 0 0);
+-  --sidebar-primary: oklch(0.488 0.243 264.376);
+-  --sidebar-primary-foreground: oklch(0.985 0 0);
+-  --sidebar-accent: oklch(0.269 0 0);
+-  --sidebar-accent-foreground: oklch(0.985 0 0);
+-  --sidebar-border: oklch(1 0 0 / 10%);
+-  --sidebar-ring: oklch(0.556 0 0);
++  --background: oklch(0.17 0.014 260);
++  --foreground: oklch(0.96 0.006 260);
++  --card: oklch(0.22 0.016 260);
++  --card-foreground: oklch(0.96 0.006 260);
++  --popover: oklch(0.22 0.016 260);
++  --popover-foreground: oklch(0.96 0.006 260);
++  --primary: oklch(0.72 0.13 255);
++  --primary-foreground: oklch(0.17 0.02 260);
++  --secondary: oklch(0.28 0.02 260);
++  --secondary-foreground: oklch(0.94 0.01 260);
++  --muted: oklch(0.26 0.016 260);
++  --muted-foreground: oklch(0.68 0.02 260);
++  --accent: oklch(0.32 0.05 255);
++  --accent-foreground: oklch(0.94 0.02 258);
++  --destructive: oklch(0.704 0.17 22);
++  --border: oklch(0.94 0.01 260 / 10%);
++  --input: oklch(0.94 0.01 260 / 15%);
++  --ring: oklch(0.65 0.11 255);
++  --chart-1: oklch(0.72 0.13 255);
++  --chart-2: oklch(0.75 0.1 195);
++  --chart-3: oklch(0.7 0.12 300);
++  --chart-4: oklch(0.78 0.12 70);
++  --chart-5: oklch(0.7 0.15 20);
++  --sidebar: oklch(0.2 0.016 260);
++  --sidebar-foreground: oklch(0.96 0.006 260);
++  --sidebar-primary: oklch(0.72 0.13 255);
++  --sidebar-primary-foreground: oklch(0.17 0.02 260);
++  --sidebar-accent: oklch(0.28 0.02 260);
++  --sidebar-accent-foreground: oklch(0.94 0.01 260);
++  --sidebar-border: oklch(0.94 0.01 260 / 10%);
++  --sidebar-ring: oklch(0.65 0.11 255);
+ }
+ 
+ @layer base {
+diff --git a/app/page.tsx b/app/page.tsx
+index a2e33c2..a477997 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -170,6 +170,10 @@ export default function HomePage() {
+           data-hero-glow
+           className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[420px] w-[720px] -translate-x-1/2 rounded-full bg-primary/20 blur-3xl"
+         />
++        <div
++          data-hero-glow
++          className="pointer-events-none absolute left-[65%] top-24 -z-10 h-[280px] w-[420px] -translate-x-1/2 rounded-full bg-chart-2/15 blur-3xl"
++        />
+ 
+         <main className="mx-auto flex max-w-4xl flex-col items-center px-8 py-24 text-center sm:py-32">
+           <span
+-- 
+2.43.0
+
