@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   description: "AI-powered document analysis for diligence and review.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"

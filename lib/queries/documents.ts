@@ -8,6 +8,7 @@ import {
   chatResponseSchema,
   documentChunksResponseSchema,
   documentListResponseSchema,
+  documentStatsResponseSchema,
   uploadResponseSchema,
 } from "@/lib/validations/api-responses";
 import { chatRequestSchema } from "@/lib/validations/chat";
@@ -39,6 +40,18 @@ export function useDocumentsQuery() {
       );
       return hasActiveWork ? 5000 : false;
     },
+  });
+}
+
+/**
+ * Dashboard summary metrics — real aggregates computed server-side from
+ * the signed-in user's documents (see `/api/documents/stats`).
+ */
+export function useDocumentStatsQuery() {
+  return useQuery({
+    queryKey: [...documentKeys.all, "stats"] as const,
+    queryFn: () => fetchJson("/api/documents/stats", documentStatsResponseSchema),
+    refetchInterval: 15_000,
   });
 }
 

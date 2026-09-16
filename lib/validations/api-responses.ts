@@ -28,6 +28,23 @@ export const documentListResponseSchema = z.object({
   documents: z.array(documentSummarySchema),
 });
 
+export const documentStatsResponseSchema = z.object({
+  totalDocuments: z.number(),
+  analyzedCount: z.number(),
+  highRiskCount: z.number(),
+  avgRiskScore: z.number().nullable(),
+  processedThisMonth: z.number(),
+  riskDistribution: z.object({
+    low: z.number(),
+    medium: z.number(),
+    high: z.number(),
+    critical: z.number(),
+  }),
+  activity: z.array(z.object({ date: z.string(), count: z.number() })),
+  documentTypes: z.array(z.object({ mimeType: z.string(), count: z.number() })),
+  hasRiskData: z.boolean(),
+});
+
 export const documentChunkSummarySchema = z.object({
   id: z.string(),
   chunkIndex: z.number(),

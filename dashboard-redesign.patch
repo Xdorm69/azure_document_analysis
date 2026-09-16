@@ -1,0 +1,718 @@
+diff --git a/app/api/documents/stats/route.ts b/app/api/documents/stats/route.ts
+new file mode 100644
+index 0000000..851413b
+--- /dev/null
++++ b/app/api/documents/stats/route.ts
+@@ -0,0 +1,104 @@
++import { NextResponse } from "next/server";
++import { prisma } from "@/lib/prisma";
++import { requireOnboardedUser } from "@/lib/auth/current-user";
++
++/**
++ * Aggregate dashboard metrics for the signed-in user's documents.
++ *
++ * Everything here is derived from real rows (`Document` / `DocumentAnalysis`)
++ * — no placeholder numbers. Metrics that would require data the schema
++ * doesn't capture yet (e.g. a semantic document "type" beyond mime type,
++ * or a per-category risk breakdown) are intentionally left out rather than
++ * invented; the dashboard renders an empty state for those instead.
++ */
++export async function GET() {
++  const auth = await requireOnboardedUser();
++  if (!auth.ok) return auth.response;
++
++  const userId = auth.user.id;
++
++  const now = new Date();
++  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
++  const thirtyDaysAgo = new Date(now);
++  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
++  thirtyDaysAgo.setHours(0, 0, 0, 0);
++
++  const [documents, analyses] = await Promise.all([
++    prisma.document.findMany({
++      where: { userId },
++      select: { id: true, mimeType: true, status: true, createdAt: true },
++    }),
++    prisma.documentAnalysis.findMany({
++      where: { document: { userId } },
++      select: { riskScore: true },
++    }),
++  ]);
++
++  const totalDocuments = documents.length;
++  const analyzedCount = documents.filter((d) => d.status === "ANALYZED").length;
++  const processedThisMonth = documents.filter(
++    (d) => d.createdAt >= startOfMonth
++  ).length;
++
++  const riskScores = analyses
++    .map((a) => a.riskScore)
++    .filter((score): score is number => typeof score === "number");
++
++  const avgRiskScore =
++    riskScores.length > 0
++      ? Math.round(
++          riskScores.reduce((sum, score) => sum + score, 0) / riskScores.length
++        )
++      : null;
++
++  const highRiskCount = riskScores.filter((score) => score >= 67).length;
++
++  const riskDistribution = {
++    low: riskScores.filter((s) => s < 34).length,
++    medium: riskScores.filter((s) => s >= 34 && s < 67).length,
++    high: riskScores.filter((s) => s >= 67 && s < 85).length,
++    critical: riskScores.filter((s) => s >= 85).length,
++  };
++
++  // Document activity: uploads per day for the last 30 days.
++  const activityByDay = new Map<string, number>();
++  for (let i = 0; i < 30; i++) {
++    const day = new Date(thirtyDaysAgo);
++    day.setDate(day.getDate() + i);
++    activityByDay.set(day.toISOString().slice(0, 10), 0);
++  }
++  for (const doc of documents) {
++    if (doc.createdAt >= thirtyDaysAgo) {
++      const key = doc.createdAt.toISOString().slice(0, 10);
++      if (activityByDay.has(key)) {
++        activityByDay.set(key, (activityByDay.get(key) ?? 0) + 1);
++      }
++    }
++  }
++  const activity = Array.from(activityByDay.entries()).map(([date, count]) => ({
++    date,
++    count,
++  }));
++
++  // Document types, grouped by mime type (the only "type" the schema
++  // currently records — not a semantic classification).
++  const typeCounts = new Map<string, number>();
++  for (const doc of documents) {
++    typeCounts.set(doc.mimeType, (typeCounts.get(doc.mimeType) ?? 0) + 1);
++  }
++  const documentTypes = Array.from(typeCounts.entries()).map(
++    ([mimeType, count]) => ({ mimeType, count })
++  );
++
++  return NextResponse.json({
++    totalDocuments,
++    analyzedCount,
++    highRiskCount,
++    avgRiskScore,
++    processedThisMonth,
++    riskDistribution,
++    activity,
++    documentTypes,
++    hasRiskData: riskScores.length > 0,
++  });
++}
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index 3a6b641..8877c6a 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -1,20 +1,41 @@
++import { auth } from "@clerk/nextjs/server";
++
++import { prisma } from "@/lib/prisma";
++import { DashboardHeader } from "@/components/features/dashboard/dashboard-header";
++import { StatCardsGrid } from "@/components/features/dashboard/stat-cards-grid";
++import { ActivityChart } from "@/components/features/dashboard/activity-chart";
++import { RiskDistributionChart } from "@/components/features/dashboard/risk-distribution-chart";
++import { DocumentTypesChart } from "@/components/features/dashboard/document-types-chart";
+ import { DocumentsWorkspace } from "@/components/features/docuements/documents-workspace";
+ 
+-export default function DashboardPage() {
++export default async function DashboardPage() {
++  const { userId: clerkId } = await auth();
++  const user = clerkId
++    ? await prisma.user.findUnique({
++        where: { clerkId },
++        select: { name: true },
++      })
++    : null;
++
+   return (
+-    <main className="mx-auto max-w-6xl p-8">
+-      <div className="mb-8">
+-        <h1 className="text-3xl font-semibold">
+-          AI Document Analyzer
+-        </h1>
++    <main className="mx-auto max-w-6xl space-y-8 p-8">
++      <DashboardHeader userName={user?.name} />
+ 
+-        <p className="mt-2 text-muted-foreground">
+-          Upload documents and turn them into
+-          searchable knowledge.
+-        </p>
++      <StatCardsGrid />
++
++      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
++        <div className="lg:col-span-2">
++          <ActivityChart />
++        </div>
++        <RiskDistributionChart />
++        <div className="lg:col-span-2">
++          <DocumentTypesChart />
++        </div>
+       </div>
+ 
+-      <DocumentsWorkspace />
++      <div id="upload-zone">
++        <DocumentsWorkspace />
++      </div>
+     </main>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/features/dashboard/activity-chart.tsx b/components/features/dashboard/activity-chart.tsx
+new file mode 100644
+index 0000000..40c6127
+--- /dev/null
++++ b/components/features/dashboard/activity-chart.tsx
+@@ -0,0 +1,97 @@
++"use client";
++
++import {
++  Area,
++  AreaChart,
++  CartesianGrid,
++  ResponsiveContainer,
++  Tooltip,
++  XAxis,
++} from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++export function ActivityChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const total = data?.activity.reduce((sum, d) => sum + d.count, 0) ?? 0;
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Document Activity</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Uploads over the last 30 days
++        </p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !data || total === 0 ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No activity yet</p>
++            <p className="text-xs text-muted-foreground">
++              Upload and analyze documents to see activity trends here.
++            </p>
++          </div>
++        ) : (
++          <ResponsiveContainer width="100%" height={220}>
++            <AreaChart data={data.activity} margin={{ left: -20, right: 8 }}>
++              <defs>
++                <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
++                  <stop
++                    offset="5%"
++                    stopColor="var(--color-chart-1)"
++                    stopOpacity={0.35}
++                  />
++                  <stop
++                    offset="95%"
++                    stopColor="var(--color-chart-1)"
++                    stopOpacity={0}
++                  />
++                </linearGradient>
++              </defs>
++              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
++              <XAxis
++                dataKey="date"
++                tickFormatter={(value: string) =>
++                  new Date(value).toLocaleDateString(undefined, {
++                    month: "short",
++                    day: "numeric",
++                  })
++                }
++                tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
++                axisLine={false}
++                tickLine={false}
++                interval={4}
++              />
++              <Tooltip
++                labelFormatter={(value: string) =>
++                  new Date(value).toLocaleDateString(undefined, {
++                    month: "short",
++                    day: "numeric",
++                  })
++                }
++                contentStyle={{
++                  background: "var(--color-card)",
++                  border: "1px solid var(--color-border)",
++                  borderRadius: 8,
++                  fontSize: 12,
++                }}
++              />
++              <Area
++                type="monotone"
++                dataKey="count"
++                name="Documents"
++                stroke="var(--color-chart-1)"
++                strokeWidth={2}
++                fill="url(#activityFill)"
++              />
++            </AreaChart>
++          </ResponsiveContainer>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/dashboard-header.tsx b/components/features/dashboard/dashboard-header.tsx
+new file mode 100644
+index 0000000..e8cf9fd
+--- /dev/null
++++ b/components/features/dashboard/dashboard-header.tsx
+@@ -0,0 +1,37 @@
++"use client";
++
++import { UploadIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++
++export function DashboardHeader({ userName }: { userName?: string | null }) {
++  const greeting = userName ? `Welcome back, ${userName}` : "Welcome back";
++
++  return (
++    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
++      <div>
++        <p className="text-xs font-medium uppercase tracking-wide text-primary">
++          Dilligence
++        </p>
++        <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
++          {greeting}
++        </h1>
++        <p className="mt-1 text-sm text-muted-foreground">
++          Here&apos;s what&apos;s happening across your documents.
++        </p>
++      </div>
++
++      <Button
++        size="lg"
++        onClick={() =>
++          document
++            .getElementById("upload-zone")
++            ?.scrollIntoView({ behavior: "smooth", block: "center" })
++        }
++      >
++        <UploadIcon className="size-4" />
++        Upload Document
++      </Button>
++    </div>
++  );
++}
+diff --git a/components/features/dashboard/document-types-chart.tsx b/components/features/dashboard/document-types-chart.tsx
+new file mode 100644
+index 0000000..d72f003
+--- /dev/null
++++ b/components/features/dashboard/document-types-chart.tsx
+@@ -0,0 +1,70 @@
++"use client";
++
++import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++const MIME_LABELS: Record<string, string> = {
++  "application/pdf": "PDF",
++  "image/png": "PNG",
++  "image/jpeg": "JPEG",
++  "image/tiff": "TIFF",
++};
++
++function labelFor(mimeType: string) {
++  return MIME_LABELS[mimeType] ?? mimeType.split("/")[1]?.toUpperCase() ?? mimeType;
++}
++
++export function DocumentTypesChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const chartData = data?.documentTypes
++    .map((t) => ({ type: labelFor(t.mimeType), count: t.count }))
++    .sort((a, b) => b.count - a.count);
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Document Types</CardTitle>
++        <p className="text-xs text-muted-foreground">By file format</p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !chartData || chartData.length === 0 ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No documents yet</p>
++            <p className="text-xs text-muted-foreground">
++              Upload documents to see the format breakdown.
++            </p>
++          </div>
++        ) : (
++          <ResponsiveContainer width="100%" height={220}>
++            <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 16 }}>
++              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--color-border)" />
++              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
++              <YAxis
++                type="category"
++                dataKey="type"
++                tick={{ fontSize: 12, fill: "var(--color-foreground)" }}
++                axisLine={false}
++                tickLine={false}
++                width={64}
++              />
++              <Tooltip
++                contentStyle={{
++                  background: "var(--color-card)",
++                  border: "1px solid var(--color-border)",
++                  borderRadius: 8,
++                  fontSize: 12,
++                }}
++              />
++              <Bar dataKey="count" name="Documents" fill="var(--color-chart-3)" radius={[0, 4, 4, 0]} barSize={18} />
++            </BarChart>
++          </ResponsiveContainer>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/risk-distribution-chart.tsx b/components/features/dashboard/risk-distribution-chart.tsx
+new file mode 100644
+index 0000000..f3ff16a
+--- /dev/null
++++ b/components/features/dashboard/risk-distribution-chart.tsx
+@@ -0,0 +1,91 @@
++"use client";
++
++import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++const RISK_COLORS: Record<string, string> = {
++  Low: "var(--color-chart-2)",
++  Medium: "var(--color-chart-4)",
++  High: "var(--color-chart-5)",
++  Critical: "var(--color-destructive)",
++};
++
++export function RiskDistributionChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const chartData = data
++    ? [
++        { name: "Low", value: data.riskDistribution.low },
++        { name: "Medium", value: data.riskDistribution.medium },
++        { name: "High", value: data.riskDistribution.high },
++        { name: "Critical", value: data.riskDistribution.critical },
++      ].filter((d) => d.value > 0)
++    : [];
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Risk Distribution</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Across all analyzed documents
++        </p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !data || !data.hasRiskData ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No risk data yet</p>
++            <p className="text-xs text-muted-foreground">
++              Risk levels will appear here once documents are analyzed.
++            </p>
++          </div>
++        ) : (
++          <div className="flex items-center gap-4">
++            <ResponsiveContainer width="100%" height={200}>
++              <PieChart>
++                <Pie
++                  data={chartData}
++                  dataKey="value"
++                  nameKey="name"
++                  innerRadius={55}
++                  outerRadius={80}
++                  paddingAngle={2}
++                >
++                  {chartData.map((entry) => (
++                    <Cell key={entry.name} fill={RISK_COLORS[entry.name]} />
++                  ))}
++                </Pie>
++                <Tooltip
++                  contentStyle={{
++                    background: "var(--color-card)",
++                    border: "1px solid var(--color-border)",
++                    borderRadius: 8,
++                    fontSize: 12,
++                  }}
++                />
++              </PieChart>
++            </ResponsiveContainer>
++
++            <ul className="shrink-0 space-y-2 text-sm">
++              {chartData.map((entry) => (
++                <li key={entry.name} className="flex items-center gap-2">
++                  <span
++                    className="size-2.5 rounded-full"
++                    style={{ background: RISK_COLORS[entry.name] }}
++                  />
++                  <span className="text-muted-foreground">{entry.name}</span>
++                  <span className="font-medium tabular-nums">
++                    {entry.value}
++                  </span>
++                </li>
++              ))}
++            </ul>
++          </div>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/stat-card.tsx b/components/features/dashboard/stat-card.tsx
+new file mode 100644
+index 0000000..8185f78
+--- /dev/null
++++ b/components/features/dashboard/stat-card.tsx
+@@ -0,0 +1,45 @@
++import { cn } from "cn";
++import type { LucideIcon } from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++
++export function StatCard({
++  label,
++  value,
++  icon: Icon,
++  hint,
++  className,
++}: {
++  label: string;
++  value: string | number;
++  icon: LucideIcon;
++  hint?: string;
++  className?: string;
++}) {
++  return (
++    <Card
++      className={cn(
++        "transition-all duration-200 hover:shadow-md hover:ring-foreground/15",
++        className
++      )}
++    >
++      <CardContent className="flex flex-row items-start justify-between gap-3">
++        <div className="min-w-0">
++          <p className="text-sm text-muted-foreground">{label}</p>
++          <p className="mt-1.5 text-3xl font-semibold tabular-nums tracking-tight">
++            {value}
++          </p>
++          {hint && (
++            <p className="mt-1 truncate text-xs text-muted-foreground">
++              {hint}
++            </p>
++          )}
++        </div>
++
++        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
++          <Icon className="size-4.5 text-primary" />
++        </div>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/stat-cards-grid.tsx b/components/features/dashboard/stat-cards-grid.tsx
+new file mode 100644
+index 0000000..a9c3519
+--- /dev/null
++++ b/components/features/dashboard/stat-cards-grid.tsx
+@@ -0,0 +1,91 @@
++"use client";
++
++import {
++  FileStackIcon,
++  ShieldCheckIcon,
++  ShieldAlertIcon,
++  GaugeIcon,
++  CalendarClockIcon,
++} from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { StatCard } from "@/components/features/dashboard/stat-card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++function StatCardSkeleton() {
++  return (
++    <Card>
++      <CardContent className="flex flex-row items-start justify-between gap-3">
++        <div className="w-full space-y-2">
++          <div className="h-3.5 w-24 animate-pulse rounded bg-muted" />
++          <div className="h-7 w-16 animate-pulse rounded bg-muted" />
++        </div>
++        <div className="size-9 shrink-0 animate-pulse rounded-lg bg-muted" />
++      </CardContent>
++    </Card>
++  );
++}
++
++export function StatCardsGrid() {
++  const { data, isLoading, error } = useDocumentStatsQuery();
++
++  if (isLoading) {
++    return (
++      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
++        {Array.from({ length: 5 }).map((_, i) => (
++          <StatCardSkeleton key={i} />
++        ))}
++      </div>
++    );
++  }
++
++  if (error || !data) {
++    return (
++      <Card>
++        <CardContent className="py-6 text-center text-sm text-muted-foreground">
++          Couldn&apos;t load your metrics right now. Try refreshing the page.
++        </CardContent>
++      </Card>
++    );
++  }
++
++  return (
++    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
++      <StatCard
++        label="Total Documents"
++        value={data.totalDocuments}
++        icon={FileStackIcon}
++        hint={
++          data.totalDocuments === 0 ? "Upload your first document" : undefined
++        }
++      />
++      <StatCard
++        label="Documents Analyzed"
++        value={data.analyzedCount}
++        icon={ShieldCheckIcon}
++        hint={
++          data.totalDocuments > 0
++            ? `${Math.round((data.analyzedCount / data.totalDocuments) * 100)}% of total`
++            : undefined
++        }
++      />
++      <StatCard
++        label="High Risk Documents"
++        value={data.hasRiskData ? data.highRiskCount : "—"}
++        icon={ShieldAlertIcon}
++        hint={data.hasRiskData ? "Risk score ≥ 67" : "No analysis yet"}
++      />
++      <StatCard
++        label="Average Risk Score"
++        value={data.hasRiskData ? `${data.avgRiskScore}` : "—"}
++        icon={GaugeIcon}
++        hint={data.hasRiskData ? "out of 100" : "No analysis yet"}
++      />
++      <StatCard
++        label="Processed This Month"
++        value={data.processedThisMonth}
++        icon={CalendarClockIcon}
++      />
++    </div>
++  );
++}
+diff --git a/lib/queries/documents.ts b/lib/queries/documents.ts
+index 6da3106..12726d2 100644
+--- a/lib/queries/documents.ts
++++ b/lib/queries/documents.ts
+@@ -8,6 +8,7 @@ import {
+   chatResponseSchema,
+   documentChunksResponseSchema,
+   documentListResponseSchema,
++  documentStatsResponseSchema,
+   uploadResponseSchema,
+ } from "@/lib/validations/api-responses";
+ import { chatRequestSchema } from "@/lib/validations/chat";
+@@ -42,6 +43,18 @@ export function useDocumentsQuery() {
+   });
+ }
+ 
++/**
++ * Dashboard summary metrics — real aggregates computed server-side from
++ * the signed-in user's documents (see `/api/documents/stats`).
++ */
++export function useDocumentStatsQuery() {
++  return useQuery({
++    queryKey: [...documentKeys.all, "stats"] as const,
++    queryFn: () => fetchJson("/api/documents/stats", documentStatsResponseSchema),
++    refetchInterval: 15_000,
++  });
++}
++
+ export function useDocumentChunksQuery(documentId: string, enabled = true) {
+   return useQuery({
+     queryKey: documentKeys.chunks(documentId),
+diff --git a/lib/validations/api-responses.ts b/lib/validations/api-responses.ts
+index aec7524..324ee0c 100644
+--- a/lib/validations/api-responses.ts
++++ b/lib/validations/api-responses.ts
+@@ -28,6 +28,23 @@ export const documentListResponseSchema = z.object({
+   documents: z.array(documentSummarySchema),
+ });
+ 
++export const documentStatsResponseSchema = z.object({
++  totalDocuments: z.number(),
++  analyzedCount: z.number(),
++  highRiskCount: z.number(),
++  avgRiskScore: z.number().nullable(),
++  processedThisMonth: z.number(),
++  riskDistribution: z.object({
++    low: z.number(),
++    medium: z.number(),
++    high: z.number(),
++    critical: z.number(),
++  }),
++  activity: z.array(z.object({ date: z.string(), count: z.number() })),
++  documentTypes: z.array(z.object({ mimeType: z.string(), count: z.number() })),
++  hasRiskData: z.boolean(),
++});
++
+ export const documentChunkSummarySchema = z.object({
+   id: z.string(),
+   chunkIndex: z.number(),
+diff --git a/package.json b/package.json
+index d3badda..d1984c5 100644
+--- a/package.json
++++ b/package.json
+@@ -31,6 +31,7 @@
+     "prisma": "7.10.0",
+     "react": "19.2.8",
+     "react-dom": "19.2.8",
++    "recharts": "^2.15.4",
+     "shadcn": "^4.21.0",
+     "three": "^0.170.0",
+     "tw-animate-css": "^1.4.0",
+@@ -41,9 +42,9 @@
+     "@types/dotenv": "^8.2.3",
+     "@types/node": "^20",
+     "@types/pg": "^8.23.1",
+-    "@types/three": "^0.170.0",
+     "@types/react": "^19",
+     "@types/react-dom": "^19",
++    "@types/three": "^0.170.0",
+     "eslint": "^9",
+     "eslint-config-next": "16.3.5",
+     "tailwindcss": "^4",
