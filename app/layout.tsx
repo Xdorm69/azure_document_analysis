@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Header } from "@/components/layout/header";
+import { Providers } from "@/app/providers";
 import { ClerkProvider } from '@clerk/nextjs'
 
 const inter = Inter({subsets:['latin'],variable:'--font-sans'});
@@ -29,10 +30,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={cn("h-full dark", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable)}
     >
       <body className="flex min-h-full flex-col">
-        <ClerkProvider>
-        <Header />
-        <div className="flex-1">{children}</div>
-      </ClerkProvider>
+        <ClerkProvider afterSignOutUrl={'/'}>
+
+          <Providers>
+            <Header />
+            <div className="flex-1">{children}</div>
+          </Providers>
+        </ClerkProvider>
       </body>
     </html>
   );

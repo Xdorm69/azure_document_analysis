@@ -16,6 +16,27 @@ enum DocumentStatus {
   FAILED
 }
 
+model User {
+  id            String    @id @default(cuid())
+
+  // Clerk's user id (`sub` claim) — the source of truth for identity.
+  clerkId       String    @unique
+  email         String    @unique
+  name          String?
+
+  // Answers collected on the /onboard questionnaire.
+  role              String?
+  primaryUseCase    String?
+  teamSize          String?
+  referralSource    String?
+  onboardingCompletedAt DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  documents     Document[]
+}
+
 model Document {
   id            String          @id @default(cuid())
   name          String
@@ -27,12 +48,17 @@ model Document {
   pageCount     Int?
   extractedText String?
 
+  userId        String?
+  user          User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   pages         DocumentPage[]
   chunks        DocumentChunk[]
   analysis      DocumentAnalysis?
+
+  @@index([userId])
 }
 
 model DocumentPage {

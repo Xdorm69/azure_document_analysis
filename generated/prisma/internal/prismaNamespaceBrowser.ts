@@ -51,6 +51,7 @@ export const AnyNull = runtime.AnyNull
 
 
 export const ModelName = {
+  User: 'User',
   Document: 'Document',
   DocumentPage: 'DocumentPage',
   DocumentChunk: 'DocumentChunk',
@@ -73,6 +74,23 @@ export const TransactionIsolationLevel = runtime.makeStrictEnum({
 export type TransactionIsolationLevel = (typeof TransactionIsolationLevel)[keyof typeof TransactionIsolationLevel]
 
 
+export const UserScalarFieldEnum = {
+  id: 'id',
+  clerkId: 'clerkId',
+  email: 'email',
+  name: 'name',
+  role: 'role',
+  primaryUseCase: 'primaryUseCase',
+  teamSize: 'teamSize',
+  referralSource: 'referralSource',
+  onboardingCompletedAt: 'onboardingCompletedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
 export const DocumentScalarFieldEnum = {
   id: 'id',
   name: 'name',
@@ -82,6 +100,7 @@ export const DocumentScalarFieldEnum = {
   status: 'status',
   pageCount: 'pageCount',
   extractedText: 'extractedText',
+  userId: 'userId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const

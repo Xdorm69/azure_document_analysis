@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
 import { ArrowLeftIcon, FileImageIcon, FileTextIcon } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
@@ -18,8 +19,18 @@ export default async function DocumentDetailPage(
 ) {
   const { id } = await props.params;
 
-  const document = await prisma.document.findUnique({
-    where: { id },
+  const { userId: clerkId } = await auth();
+  if (!clerkId) {
+    redirect("/");
+  }
+
+  const owner = await prisma.user.findUnique({ where: { clerkId } });
+  if (!owner) {
+    redirect("/onboard");
+  }
+
+  const document = await prisma.document.findFirst({
+    where: { id, userId: owner.id },
     include: { analysis: true },
   });
 

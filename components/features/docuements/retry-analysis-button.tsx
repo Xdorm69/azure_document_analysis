@@ -1,54 +1,49 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircleIcon, RotateCwIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAnalyzeDocumentMutation } from "@/lib/queries/documents";
 
 export function RetryAnalysisButton({ documentId }: { documentId: string }) {
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const analyzeMutation = useAnalyzeDocumentMutation();
 
   async function handleRetry() {
-    setIsRetrying(true);
-    setError(null);
-
     try {
-      const response = await fetch(`/api/documents/${documentId}/analyze`, {
-        method: "POST",
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "Analysis failed");
-      }
-
+      await analyzeMutation.mutateAsync(documentId);
+      // The document detail page is a server component reading straight
+      // from Prisma, so refresh it once the mutation (and its query
+      // invalidation) has settled.
       router.refresh();
-    } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Analysis failed"
-      );
-    } finally {
-      setIsRetrying(false);
+    } catch {
+      // Error is surfaced below via analyzeMutation.error.
     }
   }
 
   return (
     <div className="flex items-center gap-3">
-      <Button variant="outline" size="sm" onClick={handleRetry} disabled={isRetrying}>
-        {isRetrying ? (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleRetry}
+        disabled={analyzeMutation.isPending}
+      >
+        {analyzeMutation.isPending ? (
           <LoaderCircleIcon className="animate-spin" />
         ) : (
           <RotateCwIcon />
         )}
-        {isRetrying ? "Retrying..." : "Retry analysis"}
+        {analyzeMutation.isPending ? "Retrying..." : "Retry analysis"}
       </Button>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {analyzeMutation.isError && (
+        <p className="text-sm text-destructive">
+          {analyzeMutation.error instanceof Error
+            ? analyzeMutation.error.message
+            : "Analysis failed"}
+        </p>
+      )}
     </div>
   );
 }

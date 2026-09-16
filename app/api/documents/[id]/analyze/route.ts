@@ -20,6 +20,8 @@ import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
 import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
 
 import { storeAnalysis } from "@/lib/ai/store-analysis";
+import { requireOnboardedUser } from "@/lib/auth/current-user";
+import { documentIdParamSchema } from "@/lib/validations/document";
 
 export async function POST(
   request: Request,
@@ -27,11 +29,23 @@ export async function POST(
     params: Promise<{ id: string }>;
   },
 ) {
-  const { id } = await context.params;
+  const auth = await requireOnboardedUser();
+  if (!auth.ok) return auth.response;
+
+  const parsedParams = documentIdParamSchema.safeParse(await context.params);
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: parsedParams.error.issues[0]?.message ?? "Invalid document id" },
+      { status: 400 },
+    );
+  }
+  const { id } = parsedParams.data;
 
   try {
-    const document = await prisma.document.findUnique({
-      where: { id },
+    // Scoped to the signed-in user: another user's document id 404s
+    // instead of leaking whether it exists.
+    const document = await prisma.document.findFirst({
+      where: { id, userId: auth.user.id },
     });
 
     if (!document) {

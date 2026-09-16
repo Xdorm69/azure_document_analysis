@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { ScanSearchIcon } from "lucide-react";
-
-import {SignInButton} from "@clerk/nextjs";
+import {
+  Show,
+  SignInButton,
+  UserButton,
+} from "@clerk/nextjs";
 
 export function Header() {
   return (
@@ -20,7 +23,21 @@ export function Header() {
             Dashboard
           </Link>
 
-          <SignInButton />
+          <Show when="signed-out">
+            <SignInButton
+              mode="modal"
+              signUpForceRedirectUrl="/onboard"
+              forceRedirectUrl="/dashboard"
+            >
+              <button className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+                Sign In
+              </button>
+            </SignInButton>
+          </Show>
+
+          <Show when="signed-in">
+            <UserButton />
+          </Show>
         </nav>
       </div>
     </header>

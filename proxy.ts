@@ -1,6 +1,22 @@
-import { clerkMiddleware } from '@clerk/nextjs/server'
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
-export default clerkMiddleware()
+// Anything under here requires a signed-in Clerk session. Onboarding
+// *completion* is intentionally not checked here — that needs Prisma, and
+// we want this to stay lightweight and Edge-friendly. Completion is
+// enforced in app/dashboard/layout.tsx (pages) and
+// lib/auth/current-user.ts#requireOnboardedUser (API routes).
+const isProtectedRoute = createRouteMatcher([
+  '/dashboard(.*)',
+  '/onboard(.*)',
+  '/api/documents(.*)',
+  '/api/onboarding(.*)',
+])
+
+export default clerkMiddleware(async (auth, req) => {
+  if (isProtectedRoute(req)) {
+    await auth.protect()
+  }
+})
 
 export const config = {
   matcher: [

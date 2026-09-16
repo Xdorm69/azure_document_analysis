@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
+
 import { prisma } from "@/lib/prisma";
 import { uploadDocument } from "@/lib/azure/blob";
 import { validateDocument } from "@/lib/validations/document";
-import crypto from "crypto";
+import { requireOnboardedUser } from "@/lib/auth/current-user";
 
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
+  const auth = await requireOnboardedUser();
+  if (!auth.ok) return auth.response;
+
   try {
     const formData = await request.formData();
 
@@ -21,20 +24,17 @@ export async function POST(
       );
     }
 
+    // Zod-backed metadata check (type/size) — throws with a friendly
+    // message on failure, caught below.
     validateDocument(file);
 
-    const extension =
-      file.name.split(".").pop() ?? "bin";
+    const extension = file.name.split(".").pop() ?? "bin";
 
-    const uniqueName =
-      `${crypto.randomUUID()}.${extension}`;
+    const uniqueName = `${crypto.randomUUID()}.${extension}`;
 
-    const blobPath =uniqueName;
-    
-    await uploadDocument(
-      file,
-      blobPath
-    );
+    const blobPath = uniqueName;
+
+    await uploadDocument(file, blobPath);
 
     const document = await prisma.document.create({
       data: {
@@ -43,6 +43,7 @@ export async function POST(
         size: file.size,
         blobPath,
         status: "UPLOADED",
+        userId: auth.user.id,
       },
     });
 
@@ -58,10 +59,7 @@ export async function POST(
 
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Upload failed",
+        error: error instanceof Error ? error.message : "Upload failed",
       },
       { status: 500 }
     );

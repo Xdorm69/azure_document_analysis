@@ -12,17 +12,25 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/format";
+import { validateDocument } from "@/lib/validations/document";
+import {
+  useAnalyzeDocumentMutation,
+  useUploadDocumentMutation,
+} from "@/lib/queries/documents";
 
 const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
 
 type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
 
-export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
+export function UploadZone() {
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [message, setMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const uploadMutation = useUploadDocumentMutation();
+  const analyzeMutation = useAnalyzeDocumentMutation();
 
   const reset = useCallback(() => {
     setFile(null);
@@ -31,6 +39,17 @@ export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
   }, []);
 
   function selectFile(nextFile: File | null) {
+    if (nextFile) {
+      try {
+        validateDocument(nextFile);
+      } catch (error) {
+        setState("error");
+        setMessage(error instanceof Error ? error.message : "Invalid file");
+        setFile(nextFile);
+        return;
+      }
+    }
+
     setFile(nextFile);
     setState("idle");
     setMessage("");
@@ -43,50 +62,25 @@ export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
     setMessage("Uploading document...");
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const uploadResponse = await fetch("/api/documents/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const uploadData = await uploadResponse.json();
-
-      if (!uploadResponse.ok) {
-        throw new Error(uploadData.error ?? "Upload failed");
-      }
-
+      const uploadData = await uploadMutation.mutateAsync(file);
       const documentId = uploadData.document.id;
 
       setState("analyzing");
       setMessage("Document uploaded. Running analysis...");
-      onUploaded?.();
 
-      const analysisResponse = await fetch(
-        `/api/documents/${documentId}/analyze`,
-        { method: "POST" }
-      );
-
-      const analysisData = await analysisResponse.json();
-
-      if (!analysisResponse.ok) {
-        throw new Error(analysisData.error ?? "Analysis failed");
-      }
+      const analysisData = await analyzeMutation.mutateAsync(documentId);
 
       setState("done");
       setMessage(
-        `Analysis complete — ${analysisData.document.pageCount} page${
+        `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
           analysisData.document.pageCount === 1 ? "" : "s"
         } processed.`
       );
-      onUploaded?.();
     } catch (error) {
       setState("error");
       setMessage(
         error instanceof Error ? error.message : "Something went wrong"
       );
-      onUploaded?.();
     }
   }
 
@@ -156,7 +150,7 @@ export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
       <div className="flex items-center gap-2">
         <Button
           onClick={handleUpload}
-          disabled={!file || isBusy || state === "done"}
+          disabled={!file || isBusy || state === "done" || state === "error"}
         >
           {isBusy && <LoaderCircleIcon className="animate-spin" />}
           {state === "uploading"
@@ -173,7 +167,7 @@ export function UploadZone({ onUploaded }: { onUploaded?: () => void }) {
           </Button>
         )}
 
-        {state === "done" && (
+        {(state === "done" || state === "error") && (
           <Button variant="outline" onClick={reset}>
             Upload another
           </Button>

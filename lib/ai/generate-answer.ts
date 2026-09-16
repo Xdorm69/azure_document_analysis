@@ -29,7 +29,7 @@ export async function generateAnswer(
   const response =
     await openai.responses.create({
       model:
-        process.env.AZURE_OPENAI_DEPLOYMENT_NAME!,
+        process.env.AZURE_OPENAI_DEPLOYMENT!,
 
       input: prompt,
 
