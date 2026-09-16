@@ -1,0 +1,149 @@
+
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  ANALYZED
+  FAILED
+}
+
+model User {
+  id            String    @id @default(cuid())
+
+  // Clerk's user id (`sub` claim) — the source of truth for identity.
+  clerkId       String    @unique
+  email         String    @unique
+  name          String?
+
+  // Answers collected on the /onboard questionnaire.
+  role              String?
+  primaryUseCase    String?
+  teamSize          String?
+  referralSource    String?
+  onboardingCompletedAt DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  documents     Document[]
+}
+
+model Document {
+  id            String          @id @default(cuid())
+  name          String
+  mimeType      String
+  size          Int
+  blobPath      String
+  status        DocumentStatus  @default(UPLOADED)
+
+  pageCount     Int?
+  extractedText String?
+
+  userId        String?
+  user          User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  pages         DocumentPage[]
+  chunks        DocumentChunk[]
+  analysis      DocumentAnalysis?
+
+  @@index([userId])
+}
+
+model DocumentPage {
+  id          String          @id @default(cuid())
+
+  documentId  String
+  document    Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  pageNumber  Int
+  content     String
+
+  createdAt   DateTime        @default(now())
+
+  chunks      DocumentChunk[]
+
+  @@unique([documentId, pageNumber])
+}
+
+model DocumentChunk {
+  id          String        @id @default(cuid())
+
+  documentId  String
+  document    Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  pageId      String?
+  page        DocumentPage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  chunkIndex  Int
+  content     String
+  pageNumber  Int?
+  tokenCount  Int?
+
+  createdAt   DateTime      @default(now())
+
+  @@unique([documentId, chunkIndex])
+}
+
+model DocumentAnalysis {
+  id          String    @id @default(cuid())
+
+  documentId  String    @unique
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  summary     String?
+  keyFindings Json?
+  risks       Json?
+  riskScore   Int?
+  entities    Json?
+  importantDates Json?
+  importantNumbers Json?
+  actionItems Json?
+
+  model       String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// model ChatConversation {
+//   id         String   @id @default(cuid())
+
+//   documentId String
+//   document   Document @relation(
+//     fields: [documentId],
+//     references: [id],
+//     onDelete: Cascade
+//   )
+
+//   createdAt  DateTime @default(now())
+
+//   messages   ChatMessage[]
+// }
+
+// model ChatMessage {
+//   id             String   @id @default(cuid())
+
+//   conversationId String
+//   conversation   ChatConversation @relation(
+//     fields: [conversationId],
+//     references: [id],
+//     onDelete: Cascade
+//   )
+
+//   role           String
+//   content        String
+
+//   createdAt      DateTime @default(now())
+// }
