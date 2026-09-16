@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useRef } from "react";
 import {
   ScanSearchIcon,
   ShieldCheckIcon,
@@ -8,7 +8,7 @@ import {
   TargetIcon,
 } from "lucide-react";
 
-import { gsap, ScrollTrigger } from "@/lib/gsap";
+import { gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
 
 const VALUES = [
   {
@@ -34,8 +34,8 @@ const VALUES = [
 export default function AboutPage() {
   const rootRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    const ctx = gsap.context(() => {
+  useGSAP(
+    () => {
       gsap
         .timeline({ defaults: { ease: "power3.out" } })
         .from("[data-about-badge]", { y: -16, opacity: 0, duration: 0.5 })
@@ -72,11 +72,10 @@ export default function AboutPage() {
         });
       });
 
-      ScrollTrigger.refresh();
-    }, rootRef);
-
-    return () => ctx.revert();
-  }, []);
+      requestAnimationFrame(() => ScrollTrigger.refresh());
+    },
+    { scope: rootRef }
+  );
 
   return (
     <div ref={rootRef}>
@@ -130,13 +129,13 @@ export default function AboutPage() {
       <section className="border-t bg-muted/20">
         <div data-fade-in className="mx-auto max-w-3xl px-8 py-24 text-center">
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Where it's headed
+            Where it&apos;s headed
           </h2>
           <p className="mt-4 text-muted-foreground">
-            We're an actively evolving project — extraction accuracy, chat
+            We&apos;re an actively evolving project — extraction accuracy, chat
             over documents, and workspace collaboration are all improving
-            release over release. Have feedback or a feature request? We'd
-            love to hear it.
+            release over release. Have feedback or a feature request?
+            We&apos;d love to hear it.
           </p>
         </div>
       </section>

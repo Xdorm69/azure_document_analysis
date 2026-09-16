@@ -1,11 +1,11 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { MailIcon, MapPinIcon, MessageSquareIcon, SendIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { gsap, ScrollTrigger } from "@/lib/gsap";
+import { gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
 
 const CONTACT_POINTS = [
   {
@@ -29,8 +29,8 @@ export default function ContactPage() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"idle" | "submitting" | "sent">("idle");
 
-  useLayoutEffect(() => {
-    const ctx = gsap.context(() => {
+  useGSAP(
+    () => {
       gsap
         .timeline({ defaults: { ease: "power3.out" } })
         .from("[data-contact-title]", { y: 30, opacity: 0, duration: 0.7 })
@@ -63,11 +63,10 @@ export default function ContactPage() {
         },
       });
 
-      ScrollTrigger.refresh();
-    }, rootRef);
-
-    return () => ctx.revert();
-  }, []);
+      requestAnimationFrame(() => ScrollTrigger.refresh());
+    },
+    { scope: rootRef }
+  );
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -161,7 +160,7 @@ export default function ContactPage() {
 
             {status === "sent" && (
               <p className="text-sm text-muted-foreground">
-                Thanks for reaching out — we'll get back to you soon.
+                Thanks for reaching out — we&apos;ll get back to you soon.
               </p>
             )}
           </form>

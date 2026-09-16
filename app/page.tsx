@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useLayoutEffect, useRef } from "react";
+import dynamic from "next/dynamic";
+import { useRef } from "react";
 import {
   FileSearchIcon,
   ShieldCheckIcon,
@@ -13,7 +14,14 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { gsap, ScrollTrigger } from "@/lib/gsap";
+import { gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
+
+// The 3D hero touches window/WebGL, so it must never run during SSR —
+// dynamic() with ssr:false keeps it out of the server render entirely.
+const ThreeHero = dynamic(
+  () => import("@/components/hero/three-hero").then((mod) => mod.ThreeHero),
+  { ssr: false }
+);
 
 const FEATURES = [
   {
@@ -57,9 +65,14 @@ const STEPS = [
 export default function HomePage() {
   const rootRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    const ctx = gsap.context(() => {
-      // Hero entrance
+  // useGSAP (the official @gsap/react hook) instead of a hand-rolled
+  // useLayoutEffect + gsap.context: it scopes selectors to rootRef and
+  // reverts everything on unmount/dependency change on its own, including
+  // React Strict Mode's mount → unmount → mount cycle in dev, which is the
+  // main way a manual setup silently ends up with duplicate or dead
+  // ScrollTrigger instances.
+  useGSAP(
+    () => {
       const heroTl = gsap.timeline({ defaults: { ease: "power3.out" } });
 
       heroTl
@@ -83,6 +96,11 @@ export default function HomePage() {
           "[data-hero-glow]",
           { opacity: 0, scale: 0.85, duration: 1.2, ease: "power2.out" },
           "-=1"
+        )
+        .from(
+          "[data-hero-3d]",
+          { opacity: 0, scale: 0.8, duration: 1, ease: "power2.out" },
+          "-=0.9"
         );
 
       // Gentle floating glow loop
@@ -156,11 +174,15 @@ export default function HomePage() {
         });
       });
 
-      ScrollTrigger.refresh();
-    }, rootRef);
-
-    return () => ctx.revert();
-  }, []);
+      // Web fonts and the 3D canvas can both change layout height after
+      // this first pass runs, which is the classic cause of triggers
+      // firing at the wrong scroll position. Re-measure once more on the
+      // next frame to be safe, on top of the load/fonts.ready refresh in
+      // lib/gsap.ts.
+      requestAnimationFrame(() => ScrollTrigger.refresh());
+    },
+    { scope: rootRef }
+  );
 
   return (
     <div ref={rootRef}>
@@ -175,40 +197,49 @@ export default function HomePage() {
           className="pointer-events-none absolute left-[65%] top-24 -z-10 h-[280px] w-[420px] -translate-x-1/2 rounded-full bg-chart-2/15 blur-3xl"
         />
 
-        <main className="mx-auto flex max-w-4xl flex-col items-center px-8 py-24 text-center sm:py-32">
-          <span
-            data-hero-badge
-            className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-medium text-muted-foreground"
-          >
-            <SparklesIcon className="size-3.5" />
-            Powered by Azure Document Intelligence
-          </span>
+        <div className="mx-auto grid max-w-6xl items-center gap-4 px-8 py-24 sm:py-32 lg:grid-cols-[1.1fr_0.9fr]">
+          <main className="flex flex-col items-center text-center lg:items-start lg:text-left">
+            <span
+              data-hero-badge
+              className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-medium text-muted-foreground"
+            >
+              <SparklesIcon className="size-3.5" />
+              Powered by Azure Document Intelligence
+            </span>
 
-          <h1
-            data-hero-title
-            className="text-4xl font-semibold tracking-tight sm:text-6xl"
-          >
-            Dilligence.AI
-          </h1>
+            <h1
+              data-hero-title
+              className="text-4xl font-semibold tracking-tight sm:text-6xl"
+            >
+              Dilligence.AI
+            </h1>
 
-          <p
-            data-hero-sub
-            className="mt-4 max-w-xl text-lg text-muted-foreground"
-          >
-            Upload contracts, reports, and filings — get extracted text,
-            searchable chunks, and AI-generated insights in one workspace.
-          </p>
+            <p
+              data-hero-sub
+              className="mt-4 max-w-xl text-lg text-muted-foreground"
+            >
+              Upload contracts, reports, and filings — get extracted text,
+              searchable chunks, and AI-generated insights in one workspace.
+            </p>
 
-          <div data-hero-cta className="mt-8 flex items-center gap-3">
-            <Button size="lg" nativeButton={false} render={<Link href="/dashboard" />}>
-              Go to dashboard
-              <ArrowRightIcon className="size-4" />
-            </Button>
-            <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/about" />}>
-              Learn more
-            </Button>
+            <div data-hero-cta className="mt-8 flex items-center gap-3">
+              <Button size="lg" nativeButton={false} render={<Link href="/dashboard" />}>
+                Go to dashboard
+                <ArrowRightIcon className="size-4" />
+              </Button>
+              <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/about" />}>
+                Learn more
+              </Button>
+            </div>
+          </main>
+
+          <div
+            data-hero-3d
+            className="mx-auto h-[280px] w-[280px] sm:h-[360px] sm:w-[360px] lg:h-[420px] lg:w-[420px]"
+          >
+            <ThreeHero />
           </div>
-        </main>
+        </div>
       </section>
 
       {/* Features */}
