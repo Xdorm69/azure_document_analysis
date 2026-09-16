@@ -13,6 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/format";
 import { validateDocument } from "@/lib/validations/document";
+import { computePipelineStages } from "@/lib/pipeline";
+import { LivePipelineStatus } from "@/components/features/docuements/live-pipeline-status";
 import {
   useAnalyzeDocumentMutation,
   useUploadDocumentMutation,
@@ -22,10 +24,18 @@ const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
 
 type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
 
+const PLACEHOLDER_STAGES = computePipelineStages({
+  status: "PROCESSING",
+  hasChunks: false,
+  indexedAt: null,
+  hasAnalysis: false,
+});
+
 export function UploadZone() {
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [message, setMessage] = useState("");
+  const [analyzingDocumentId, setAnalyzingDocumentId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -36,6 +46,7 @@ export function UploadZone() {
     setFile(null);
     setState("idle");
     setMessage("");
+    setAnalyzingDocumentId(null);
   }, []);
 
   function selectFile(nextFile: File | null) {
@@ -66,11 +77,13 @@ export function UploadZone() {
       const documentId = uploadData.document.id;
 
       setState("analyzing");
+      setAnalyzingDocumentId(documentId);
       setMessage("Document uploaded. Running analysis...");
 
       const analysisData = await analyzeMutation.mutateAsync(documentId);
 
       setState("done");
+      setAnalyzingDocumentId(null);
       setMessage(
         `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
           analysisData.document.pageCount === 1 ? "" : "s"
@@ -78,6 +91,7 @@ export function UploadZone() {
       );
     } catch (error) {
       setState("error");
+      setAnalyzingDocumentId(null);
       setMessage(
         error instanceof Error ? error.message : "Something went wrong"
       );
@@ -186,6 +200,13 @@ export function UploadZone() {
           )}
           {message}
         </p>
+      )}
+
+      {state === "analyzing" && analyzingDocumentId && (
+        <LivePipelineStatus
+          documentId={analyzingDocumentId}
+          initialStages={PLACEHOLDER_STAGES}
+        />
       )}
     </div>
   );

@@ -17,8 +17,20 @@ export async function GET() {
       status: true,
       pageCount: true,
       createdAt: true,
+      analysis: { select: { riskScore: true } },
     },
   });
 
-  return NextResponse.json({ documents });
+  return NextResponse.json({
+    documents: documents.map((doc) => ({
+      id: doc.id,
+      name: doc.name,
+      mimeType: doc.mimeType,
+      size: doc.size,
+      status: doc.status,
+      pageCount: doc.pageCount,
+      createdAt: doc.createdAt,
+      riskScore: doc.analysis?.riskScore ?? null,
+    })),
+  });
 }

@@ -856,6 +856,7 @@ export const DocumentScalarFieldEnum = {
   status: 'status',
   pageCount: 'pageCount',
   extractedText: 'extractedText',
+  indexedAt: 'indexedAt',
   userId: 'userId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'

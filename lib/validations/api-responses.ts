@@ -22,6 +22,20 @@ export const documentSummarySchema = z.object({
   status: documentStatusSchema,
   pageCount: z.number().nullable(),
   createdAt: z.coerce.date().transform((date) => date.toISOString()),
+  riskScore: z.number().nullable(),
+});
+
+export const documentFileUrlResponseSchema = z.object({
+  url: z.string(),
+  mimeType: z.string(),
+  expiresInSeconds: z.number(),
+});
+
+export const pipelineStatusResponseSchema = z.object({
+  status: documentStatusSchema,
+  hasChunks: z.boolean(),
+  indexedAt: z.coerce.date().nullable(),
+  hasAnalysis: z.boolean(),
 });
 
 export const documentListResponseSchema = z.object({

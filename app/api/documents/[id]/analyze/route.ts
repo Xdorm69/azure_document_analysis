@@ -82,6 +82,14 @@ export async function POST(
 
     const searchStats = await indexDocumentChunks(document.id);
 
+    // Recorded the moment indexing succeeds (not batched with the final
+    // update below) so the processing pipeline UI can show "indexed" as
+    // its own real, observable step while analysis is still running.
+    await prisma.document.update({
+      where: { id },
+      data: { indexedAt: new Date() },
+    });
+
     //ai summarization
     const analysisContext = await getAnalysisContext(document.id);
 

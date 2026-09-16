@@ -7,8 +7,10 @@ import {
   analyzeResponseSchema,
   chatResponseSchema,
   documentChunksResponseSchema,
+  documentFileUrlResponseSchema,
   documentListResponseSchema,
   documentStatsResponseSchema,
+  pipelineStatusResponseSchema,
   uploadResponseSchema,
 } from "@/lib/validations/api-responses";
 import { chatRequestSchema } from "@/lib/validations/chat";
@@ -52,6 +54,44 @@ export function useDocumentStatsQuery() {
     queryKey: [...documentKeys.all, "stats"] as const,
     queryFn: () => fetchJson("/api/documents/stats", documentStatsResponseSchema),
     refetchInterval: 15_000,
+  });
+}
+
+/**
+ * Short-lived SAS URL for rendering the original file in the document
+ * viewer. Refetched well before its 10-minute expiry so a long-open tab
+ * doesn't end up with a dead viewer link.
+ */
+export function useDocumentFileUrlQuery(documentId: string, enabled = true) {
+  return useQuery({
+    queryKey: [...documentKeys.detail(documentId), "file-url"] as const,
+    queryFn: () =>
+      fetchJson(
+        `/api/documents/${documentId}/file-url`,
+        documentFileUrlResponseSchema
+      ),
+    enabled,
+    staleTime: 7 * 60 * 1000,
+    refetchInterval: 7 * 60 * 1000,
+  });
+}
+
+/**
+ * Polls the real, persisted pipeline signals (see `lib/pipeline.ts`) so
+ * the processing pipeline UI can update live — during initial upload,
+ * during a retry, or on the detail page — without depending on a full
+ * page refresh.
+ */
+export function useDocumentPipelineStatusQuery(documentId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...documentKeys.detail(documentId), "pipeline-status"] as const,
+    queryFn: () =>
+      fetchJson(
+        `/api/documents/${documentId}/pipeline-status`,
+        pipelineStatusResponseSchema
+      ),
+    enabled,
+    refetchInterval: enabled ? 2000 : false,
   });
 }
 

@@ -1,4 +1,4 @@
-import { FileStackIcon } from "lucide-react";
+import { FileStackIcon, SearchXIcon } from "lucide-react";
 
 import { DocumentCard } from "@/components/features/docuements/document-card";
 import type { DocumentSummary } from "@/types/document";
@@ -7,10 +7,15 @@ export function DocumentList({
   documents,
   isLoading,
   error,
+  isFiltered = false,
 }: {
   documents: DocumentSummary[];
   isLoading: boolean;
   error: string | null;
+  /** True when `documents` is already empty because of an active
+   * search/filter, so the empty state can say so instead of implying
+   * the library itself has nothing in it. */
+  isFiltered?: boolean;
 }) {
   if (isLoading) {
     return (
@@ -29,6 +34,18 @@ export function DocumentList({
     return (
       <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-sm text-destructive">
         {error}
+      </div>
+    );
+  }
+
+  if (documents.length === 0 && isFiltered) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center">
+        <SearchXIcon className="size-8 text-muted-foreground" />
+        <p className="mt-3 text-sm font-medium">No matching documents</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Try a different search term or filter.
+        </p>
       </div>
     );
   }

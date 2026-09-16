@@ -1,10 +1,29 @@
 import Link from "next/link";
 import { FileImageIcon, FileTextIcon } from "lucide-react";
+import { cn } from "cn";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
+import { labelForMimeType } from "@/lib/mime-labels";
+import { riskScoreLabel, RISK_TONE_CLASSES } from "@/lib/analysis-view";
 import type { DocumentSummary } from "@/types/document";
+
+function RiskBadge({ score }: { score: number }) {
+  const { label, tone } = riskScoreLabel(score);
+  const toneClasses = RISK_TONE_CLASSES[tone];
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
+        toneClasses.bg,
+        toneClasses.text
+      )}
+    >
+      {label.replace(" RISK", "")} · {score}
+    </span>
+  );
+}
 
 export function DocumentCard({ document }: { document: DocumentSummary }) {
   const isImage = document.mimeType.startsWith("image/");
@@ -21,12 +40,18 @@ export function DocumentCard({ document }: { document: DocumentSummary }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{document.name}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
+              {labelForMimeType(document.mimeType)}
+              {" · "}
               {formatBytes(document.size)}
               {document.pageCount ? ` · ${document.pageCount} pages` : ""}
               {" · "}
               {formatRelativeTime(document.createdAt)}
             </p>
           </div>
+
+          {document.riskScore !== null && (
+            <RiskBadge score={document.riskScore} />
+          )}
 
           <DocumentStatusBadge status={document.status} className="shrink-0" />
         </CardContent>

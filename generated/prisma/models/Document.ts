@@ -45,6 +45,7 @@ export type DocumentMinAggregateOutputType = {
   status: $Enums.DocumentStatus | null
   pageCount: number | null
   extractedText: string | null
+  indexedAt: Date | null
   userId: string | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -59,6 +60,7 @@ export type DocumentMaxAggregateOutputType = {
   status: $Enums.DocumentStatus | null
   pageCount: number | null
   extractedText: string | null
+  indexedAt: Date | null
   userId: string | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -73,6 +75,7 @@ export type DocumentCountAggregateOutputType = {
   status: number
   pageCount: number
   extractedText: number
+  indexedAt: number
   userId: number
   createdAt: number
   updatedAt: number
@@ -99,6 +102,7 @@ export type DocumentMinAggregateInputType = {
   status?: true
   pageCount?: true
   extractedText?: true
+  indexedAt?: true
   userId?: true
   createdAt?: true
   updatedAt?: true
@@ -113,6 +117,7 @@ export type DocumentMaxAggregateInputType = {
   status?: true
   pageCount?: true
   extractedText?: true
+  indexedAt?: true
   userId?: true
   createdAt?: true
   updatedAt?: true
@@ -127,6 +132,7 @@ export type DocumentCountAggregateInputType = {
   status?: true
   pageCount?: true
   extractedText?: true
+  indexedAt?: true
   userId?: true
   createdAt?: true
   updatedAt?: true
@@ -228,6 +234,7 @@ export type DocumentGroupByOutputType = {
   status: $Enums.DocumentStatus
   pageCount: number | null
   extractedText: string | null
+  indexedAt: Date | null
   userId: string | null
   createdAt: Date
   updatedAt: Date
@@ -265,6 +272,7 @@ export type DocumentWhereInput = {
   status?: Prisma.EnumDocumentStatusFilter<"Document"> | $Enums.DocumentStatus
   pageCount?: Prisma.IntNullableFilter<"Document"> | number | null
   extractedText?: Prisma.StringNullableFilter<"Document"> | string | null
+  indexedAt?: Prisma.DateTimeNullableFilter<"Document"> | Date | string | null
   userId?: Prisma.StringNullableFilter<"Document"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Document"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Document"> | Date | string
@@ -283,6 +291,7 @@ export type DocumentOrderByWithRelationInput = {
   status?: Prisma.SortOrder
   pageCount?: Prisma.SortOrderInput | Prisma.SortOrder
   extractedText?: Prisma.SortOrderInput | Prisma.SortOrder
+  indexedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   userId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -304,6 +313,7 @@ export type DocumentWhereUniqueInput = Prisma.AtLeast<{
   status?: Prisma.EnumDocumentStatusFilter<"Document"> | $Enums.DocumentStatus
   pageCount?: Prisma.IntNullableFilter<"Document"> | number | null
   extractedText?: Prisma.StringNullableFilter<"Document"> | string | null
+  indexedAt?: Prisma.DateTimeNullableFilter<"Document"> | Date | string | null
   userId?: Prisma.StringNullableFilter<"Document"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Document"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Document"> | Date | string
@@ -322,6 +332,7 @@ export type DocumentOrderByWithAggregationInput = {
   status?: Prisma.SortOrder
   pageCount?: Prisma.SortOrderInput | Prisma.SortOrder
   extractedText?: Prisma.SortOrderInput | Prisma.SortOrder
+  indexedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   userId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -344,6 +355,7 @@ export type DocumentScalarWhereWithAggregatesInput = {
   status?: Prisma.EnumDocumentStatusWithAggregatesFilter<"Document"> | $Enums.DocumentStatus
   pageCount?: Prisma.IntNullableWithAggregatesFilter<"Document"> | number | null
   extractedText?: Prisma.StringNullableWithAggregatesFilter<"Document"> | string | null
+  indexedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Document"> | Date | string | null
   userId?: Prisma.StringNullableWithAggregatesFilter<"Document"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Document"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Document"> | Date | string
@@ -358,6 +370,7 @@ export type DocumentCreateInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   user?: Prisma.UserCreateNestedOneWithoutDocumentsInput
@@ -375,6 +388,7 @@ export type DocumentUncheckedCreateInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   userId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -392,6 +406,7 @@ export type DocumentUpdateInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneWithoutDocumentsNestedInput
@@ -409,6 +424,7 @@ export type DocumentUncheckedUpdateInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -426,6 +442,7 @@ export type DocumentCreateManyInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   userId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -440,6 +457,7 @@ export type DocumentUpdateManyMutationInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -453,6 +471,7 @@ export type DocumentUncheckedUpdateManyInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -477,6 +496,7 @@ export type DocumentCountOrderByAggregateInput = {
   status?: Prisma.SortOrder
   pageCount?: Prisma.SortOrder
   extractedText?: Prisma.SortOrder
+  indexedAt?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -496,6 +516,7 @@ export type DocumentMaxOrderByAggregateInput = {
   status?: Prisma.SortOrder
   pageCount?: Prisma.SortOrder
   extractedText?: Prisma.SortOrder
+  indexedAt?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -510,6 +531,7 @@ export type DocumentMinOrderByAggregateInput = {
   status?: Prisma.SortOrder
   pageCount?: Prisma.SortOrder
   extractedText?: Prisma.SortOrder
+  indexedAt?: Prisma.SortOrder
   userId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -638,6 +660,7 @@ export type DocumentCreateWithoutUserInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   pages?: Prisma.DocumentPageCreateNestedManyWithoutDocumentInput
@@ -654,6 +677,7 @@ export type DocumentUncheckedCreateWithoutUserInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   pages?: Prisma.DocumentPageUncheckedCreateNestedManyWithoutDocumentInput
@@ -699,6 +723,7 @@ export type DocumentScalarWhereInput = {
   status?: Prisma.EnumDocumentStatusFilter<"Document"> | $Enums.DocumentStatus
   pageCount?: Prisma.IntNullableFilter<"Document"> | number | null
   extractedText?: Prisma.StringNullableFilter<"Document"> | string | null
+  indexedAt?: Prisma.DateTimeNullableFilter<"Document"> | Date | string | null
   userId?: Prisma.StringNullableFilter<"Document"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Document"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Document"> | Date | string
@@ -713,6 +738,7 @@ export type DocumentCreateWithoutPagesInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   user?: Prisma.UserCreateNestedOneWithoutDocumentsInput
@@ -729,6 +755,7 @@ export type DocumentUncheckedCreateWithoutPagesInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   userId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -761,6 +788,7 @@ export type DocumentUpdateWithoutPagesInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneWithoutDocumentsNestedInput
@@ -777,6 +805,7 @@ export type DocumentUncheckedUpdateWithoutPagesInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -793,6 +822,7 @@ export type DocumentCreateWithoutChunksInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   user?: Prisma.UserCreateNestedOneWithoutDocumentsInput
@@ -809,6 +839,7 @@ export type DocumentUncheckedCreateWithoutChunksInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   userId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -841,6 +872,7 @@ export type DocumentUpdateWithoutChunksInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneWithoutDocumentsNestedInput
@@ -857,6 +889,7 @@ export type DocumentUncheckedUpdateWithoutChunksInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -873,6 +906,7 @@ export type DocumentCreateWithoutAnalysisInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   user?: Prisma.UserCreateNestedOneWithoutDocumentsInput
@@ -889,6 +923,7 @@ export type DocumentUncheckedCreateWithoutAnalysisInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   userId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -921,6 +956,7 @@ export type DocumentUpdateWithoutAnalysisInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneWithoutDocumentsNestedInput
@@ -937,6 +973,7 @@ export type DocumentUncheckedUpdateWithoutAnalysisInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   userId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -953,6 +990,7 @@ export type DocumentCreateManyUserInput = {
   status?: $Enums.DocumentStatus
   pageCount?: number | null
   extractedText?: string | null
+  indexedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -966,6 +1004,7 @@ export type DocumentUpdateWithoutUserInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pages?: Prisma.DocumentPageUpdateManyWithoutDocumentNestedInput
@@ -982,6 +1021,7 @@ export type DocumentUncheckedUpdateWithoutUserInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pages?: Prisma.DocumentPageUncheckedUpdateManyWithoutDocumentNestedInput
@@ -998,6 +1038,7 @@ export type DocumentUncheckedUpdateManyWithoutUserInput = {
   status?: Prisma.EnumDocumentStatusFieldUpdateOperationsInput | $Enums.DocumentStatus
   pageCount?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   extractedText?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  indexedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -1051,6 +1092,7 @@ export type DocumentSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs
   status?: boolean
   pageCount?: boolean
   extractedText?: boolean
+  indexedAt?: boolean
   userId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1070,6 +1112,7 @@ export type DocumentSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exte
   status?: boolean
   pageCount?: boolean
   extractedText?: boolean
+  indexedAt?: boolean
   userId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1085,6 +1128,7 @@ export type DocumentSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exte
   status?: boolean
   pageCount?: boolean
   extractedText?: boolean
+  indexedAt?: boolean
   userId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1100,12 +1144,13 @@ export type DocumentSelectScalar = {
   status?: boolean
   pageCount?: boolean
   extractedText?: boolean
+  indexedAt?: boolean
   userId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type DocumentOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "mimeType" | "size" | "blobPath" | "status" | "pageCount" | "extractedText" | "userId" | "createdAt" | "updatedAt", ExtArgs["result"]["document"]>
+export type DocumentOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "mimeType" | "size" | "blobPath" | "status" | "pageCount" | "extractedText" | "indexedAt" | "userId" | "createdAt" | "updatedAt", ExtArgs["result"]["document"]>
 export type DocumentInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.Document$userArgs<ExtArgs>
   pages?: boolean | Prisma.Document$pagesArgs<ExtArgs>
@@ -1137,6 +1182,7 @@ export type $DocumentPayload<ExtArgs extends runtime.Types.Extensions.InternalAr
     status: $Enums.DocumentStatus
     pageCount: number | null
     extractedText: string | null
+    indexedAt: Date | null
     userId: string | null
     createdAt: Date
     updatedAt: Date
@@ -1575,6 +1621,7 @@ export interface DocumentFieldRefs {
   readonly status: Prisma.FieldRef<"Document", 'DocumentStatus'>
   readonly pageCount: Prisma.FieldRef<"Document", 'Int'>
   readonly extractedText: Prisma.FieldRef<"Document", 'String'>
+  readonly indexedAt: Prisma.FieldRef<"Document", 'DateTime'>
   readonly userId: Prisma.FieldRef<"Document", 'String'>
   readonly createdAt: Prisma.FieldRef<"Document", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"Document", 'DateTime'>

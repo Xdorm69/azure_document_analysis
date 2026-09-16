@@ -12,6 +12,7 @@ export type DocumentSummary = {
   status: DocumentStatus;
   pageCount: number | null;
   createdAt: string;
+  riskScore: number | null;
 };
 
 export type DocumentChunkSummary = {

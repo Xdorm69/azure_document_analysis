@@ -47,6 +47,7 @@ model Document {
 
   pageCount     Int?
   extractedText String?
+  indexedAt     DateTime?
 
   userId        String?
   user          User?           @relation(fields: [userId], references: [id], onDelete: Cascade)

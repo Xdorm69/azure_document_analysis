@@ -5,15 +5,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDocumentStatsQuery } from "@/lib/queries/documents";
 
-const MIME_LABELS: Record<string, string> = {
-  "application/pdf": "PDF",
-  "image/png": "PNG",
-  "image/jpeg": "JPEG",
-  "image/tiff": "TIFF",
-};
+import { labelForMimeType } from "@/lib/mime-labels";
 
 function labelFor(mimeType: string) {
-  return MIME_LABELS[mimeType] ?? mimeType.split("/")[1]?.toUpperCase() ?? mimeType;
+  return labelForMimeType(mimeType);
 }
 
 export function DocumentTypesChart() {

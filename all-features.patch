@@ -1,0 +1,3035 @@
+diff --git a/app/api/documents/[id]/analyze/route.ts b/app/api/documents/[id]/analyze/route.ts
+index 21251f8..c9f7eda 100644
+--- a/app/api/documents/[id]/analyze/route.ts
++++ b/app/api/documents/[id]/analyze/route.ts
+@@ -82,6 +82,14 @@ export async function POST(
+ 
+     const searchStats = await indexDocumentChunks(document.id);
+ 
++    // Recorded the moment indexing succeeds (not batched with the final
++    // update below) so the processing pipeline UI can show "indexed" as
++    // its own real, observable step while analysis is still running.
++    await prisma.document.update({
++      where: { id },
++      data: { indexedAt: new Date() },
++    });
++
+     //ai summarization
+     const analysisContext = await getAnalysisContext(document.id);
+ 
+diff --git a/app/api/documents/[id]/file-url/route.ts b/app/api/documents/[id]/file-url/route.ts
+new file mode 100644
+index 0000000..221429b
+--- /dev/null
++++ b/app/api/documents/[id]/file-url/route.ts
+@@ -0,0 +1,46 @@
++import { NextResponse } from "next/server";
++
++import { prisma } from "@/lib/prisma";
++import { generateBlobSasUrl } from "@/lib/azure/blob";
++import { requireOnboardedUser } from "@/lib/auth/current-user";
++import { documentIdParamSchema } from "@/lib/validations/document";
++
++/**
++ * Returns a short-lived (10 min) read-only SAS URL for the original file,
++ * so the document viewer can render it without proxying bytes through our
++ * own server. Reuses the same `generateBlobSasUrl` helper the analysis
++ * pipeline already relies on.
++ */
++export async function GET(
++  request: Request,
++  context: { params: Promise<{ id: string }> }
++) {
++  const auth = await requireOnboardedUser();
++  if (!auth.ok) return auth.response;
++
++  const parsedParams = documentIdParamSchema.safeParse(await context.params);
++  if (!parsedParams.success) {
++    return NextResponse.json(
++      { error: parsedParams.error.issues[0]?.message ?? "Invalid document id" },
++      { status: 400 }
++    );
++  }
++  const { id } = parsedParams.data;
++
++  const document = await prisma.document.findFirst({
++    where: { id, userId: auth.user.id },
++    select: { blobPath: true, mimeType: true },
++  });
++
++  if (!document) {
++    return NextResponse.json({ error: "Document not found" }, { status: 404 });
++  }
++
++  const url = generateBlobSasUrl(document.blobPath);
++
++  return NextResponse.json({
++    url,
++    mimeType: document.mimeType,
++    expiresInSeconds: 10 * 60,
++  });
++}
+diff --git a/app/api/documents/[id]/pipeline-status/route.ts b/app/api/documents/[id]/pipeline-status/route.ts
+new file mode 100644
+index 0000000..58af120
+--- /dev/null
++++ b/app/api/documents/[id]/pipeline-status/route.ts
+@@ -0,0 +1,51 @@
++import { NextResponse } from "next/server";
++
++import { prisma } from "@/lib/prisma";
++import { requireOnboardedUser } from "@/lib/auth/current-user";
++import { documentIdParamSchema } from "@/lib/validations/document";
++
++/**
++ * Returns the same raw signals `computePipelineStages` consumes on the
++ * document detail page, so both the detail page and the upload flow can
++ * show a live processing pipeline without duplicating the derivation
++ * logic (see `lib/pipeline.ts`).
++ */
++export async function GET(
++  request: Request,
++  context: { params: Promise<{ id: string }> }
++) {
++  const auth = await requireOnboardedUser();
++  if (!auth.ok) return auth.response;
++
++  const parsedParams = documentIdParamSchema.safeParse(await context.params);
++  if (!parsedParams.success) {
++    return NextResponse.json(
++      { error: parsedParams.error.issues[0]?.message ?? "Invalid document id" },
++      { status: 400 }
++    );
++  }
++  const { id } = parsedParams.data;
++
++  const [document, chunkCount, analysis] = await Promise.all([
++    prisma.document.findFirst({
++      where: { id, userId: auth.user.id },
++      select: { status: true, indexedAt: true },
++    }),
++    prisma.documentChunk.count({ where: { documentId: id } }),
++    prisma.documentAnalysis.findUnique({
++      where: { documentId: id },
++      select: { id: true },
++    }),
++  ]);
++
++  if (!document) {
++    return NextResponse.json({ error: "Document not found" }, { status: 404 });
++  }
++
++  return NextResponse.json({
++    status: document.status,
++    hasChunks: chunkCount > 0,
++    indexedAt: document.indexedAt,
++    hasAnalysis: analysis !== null,
++  });
++}
+diff --git a/app/api/documents/route.ts b/app/api/documents/route.ts
+index 27bb03e..33a55af 100644
+--- a/app/api/documents/route.ts
++++ b/app/api/documents/route.ts
+@@ -17,8 +17,20 @@ export async function GET() {
+       status: true,
+       pageCount: true,
+       createdAt: true,
++      analysis: { select: { riskScore: true } },
+     },
+   });
+ 
+-  return NextResponse.json({ documents });
++  return NextResponse.json({
++    documents: documents.map((doc) => ({
++      id: doc.id,
++      name: doc.name,
++      mimeType: doc.mimeType,
++      size: doc.size,
++      status: doc.status,
++      pageCount: doc.pageCount,
++      createdAt: doc.createdAt,
++      riskScore: doc.analysis?.riskScore ?? null,
++    })),
++  });
+ }
+diff --git a/app/api/documents/stats/route.ts b/app/api/documents/stats/route.ts
+new file mode 100644
+index 0000000..851413b
+--- /dev/null
++++ b/app/api/documents/stats/route.ts
+@@ -0,0 +1,104 @@
++import { NextResponse } from "next/server";
++import { prisma } from "@/lib/prisma";
++import { requireOnboardedUser } from "@/lib/auth/current-user";
++
++/**
++ * Aggregate dashboard metrics for the signed-in user's documents.
++ *
++ * Everything here is derived from real rows (`Document` / `DocumentAnalysis`)
++ * — no placeholder numbers. Metrics that would require data the schema
++ * doesn't capture yet (e.g. a semantic document "type" beyond mime type,
++ * or a per-category risk breakdown) are intentionally left out rather than
++ * invented; the dashboard renders an empty state for those instead.
++ */
++export async function GET() {
++  const auth = await requireOnboardedUser();
++  if (!auth.ok) return auth.response;
++
++  const userId = auth.user.id;
++
++  const now = new Date();
++  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
++  const thirtyDaysAgo = new Date(now);
++  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
++  thirtyDaysAgo.setHours(0, 0, 0, 0);
++
++  const [documents, analyses] = await Promise.all([
++    prisma.document.findMany({
++      where: { userId },
++      select: { id: true, mimeType: true, status: true, createdAt: true },
++    }),
++    prisma.documentAnalysis.findMany({
++      where: { document: { userId } },
++      select: { riskScore: true },
++    }),
++  ]);
++
++  const totalDocuments = documents.length;
++  const analyzedCount = documents.filter((d) => d.status === "ANALYZED").length;
++  const processedThisMonth = documents.filter(
++    (d) => d.createdAt >= startOfMonth
++  ).length;
++
++  const riskScores = analyses
++    .map((a) => a.riskScore)
++    .filter((score): score is number => typeof score === "number");
++
++  const avgRiskScore =
++    riskScores.length > 0
++      ? Math.round(
++          riskScores.reduce((sum, score) => sum + score, 0) / riskScores.length
++        )
++      : null;
++
++  const highRiskCount = riskScores.filter((score) => score >= 67).length;
++
++  const riskDistribution = {
++    low: riskScores.filter((s) => s < 34).length,
++    medium: riskScores.filter((s) => s >= 34 && s < 67).length,
++    high: riskScores.filter((s) => s >= 67 && s < 85).length,
++    critical: riskScores.filter((s) => s >= 85).length,
++  };
++
++  // Document activity: uploads per day for the last 30 days.
++  const activityByDay = new Map<string, number>();
++  for (let i = 0; i < 30; i++) {
++    const day = new Date(thirtyDaysAgo);
++    day.setDate(day.getDate() + i);
++    activityByDay.set(day.toISOString().slice(0, 10), 0);
++  }
++  for (const doc of documents) {
++    if (doc.createdAt >= thirtyDaysAgo) {
++      const key = doc.createdAt.toISOString().slice(0, 10);
++      if (activityByDay.has(key)) {
++        activityByDay.set(key, (activityByDay.get(key) ?? 0) + 1);
++      }
++    }
++  }
++  const activity = Array.from(activityByDay.entries()).map(([date, count]) => ({
++    date,
++    count,
++  }));
++
++  // Document types, grouped by mime type (the only "type" the schema
++  // currently records — not a semantic classification).
++  const typeCounts = new Map<string, number>();
++  for (const doc of documents) {
++    typeCounts.set(doc.mimeType, (typeCounts.get(doc.mimeType) ?? 0) + 1);
++  }
++  const documentTypes = Array.from(typeCounts.entries()).map(
++    ([mimeType, count]) => ({ mimeType, count })
++  );
++
++  return NextResponse.json({
++    totalDocuments,
++    analyzedCount,
++    highRiskCount,
++    avgRiskScore,
++    processedThisMonth,
++    riskDistribution,
++    activity,
++    documentTypes,
++    hasRiskData: riskScores.length > 0,
++  });
++}
+diff --git a/app/dashboard/documents/[id]/page.tsx b/app/dashboard/documents/[id]/page.tsx
+index 29540b2..be94d9b 100644
+--- a/app/dashboard/documents/[id]/page.tsx
++++ b/app/dashboard/documents/[id]/page.tsx
+@@ -6,12 +6,10 @@ import { ArrowLeftIcon, FileImageIcon, FileTextIcon } from "lucide-react";
+ import { prisma } from "@/lib/prisma";
+ import { formatBytes, formatRelativeTime } from "@/lib/format";
+ import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
+-import { AnalysisPanel } from "@/components/features/docuements/analysis-panel";
+-import { ExtractedTextPanel } from "@/components/features/docuements/extracted-text-panel";
+-import { ChunkList } from "@/components/features/docuements/chunk-list";
++import { DocumentWorkspaceSplit } from "@/components/features/docuements/document-workspace-split";
+ import { RetryAnalysisButton } from "@/components/features/docuements/retry-analysis-button";
+-import { AutoRefresh } from "@/components/features/docuements/auto-refresh";
+-import { DocumentChat } from "@/components/features/docuements/document-chat";
++import { LivePipelineStatus } from "@/components/features/docuements/live-pipeline-status";
++import { computePipelineStages } from "@/lib/pipeline";
+ import { Card, CardContent } from "@/components/ui/card";
+ 
+ export default async function DocumentDetailPage(
+@@ -53,10 +51,22 @@ export default async function DocumentDetailPage(
+         })
+       : [];
+ 
++  const chunkCount =
++    document.status === "ANALYZED"
++      ? chunks.length
++      : await prisma.documentChunk.count({ where: { documentId: id } });
++
+   const isImage = document.mimeType.startsWith("image/");
+   const Icon = isImage ? FileImageIcon : FileTextIcon;
+   const isAnalyzed = document.status === "ANALYZED";
+ 
++  const pipelineStages = computePipelineStages({
++    status: document.status,
++    hasChunks: chunkCount > 0,
++    indexedAt: document.indexedAt,
++    hasAnalysis: document.analysis !== null,
++  });
++
+   return (
+     <main className="mx-auto max-w-6xl space-y-6 p-8">
+       <Link
+@@ -86,57 +96,34 @@ export default async function DocumentDetailPage(
+       </div>
+ 
+       {document.status === "FAILED" && (
+-        <Card>
+-          <CardContent className="flex items-center justify-between gap-4">
+-            <p className="text-sm text-destructive">
+-              Analysis failed for this document. You can try running it
+-              again.
+-            </p>
+-            <RetryAnalysisButton documentId={document.id} />
+-          </CardContent>
+-        </Card>
+-      )}
+-
+-      {(document.status === "UPLOADED" || document.status === "PROCESSING") && (
+-        <>
+-          <AutoRefresh />
++        <div className="space-y-4">
++          <LivePipelineStatus documentId={document.id} initialStages={pipelineStages} />
+           <Card>
+-            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+-              {document.status === "PROCESSING"
+-                ? "Analysis is running — this page will update automatically once it's done."
+-                : "This document is queued for analysis."}
++            <CardContent className="flex items-center justify-between gap-4">
++              <p className="text-sm text-destructive">
++                Analysis failed for this document. You can try running it
++                again.
++              </p>
++              <RetryAnalysisButton documentId={document.id} />
+             </CardContent>
+           </Card>
+-        </>
++        </div>
++      )}
++
++      {(document.status === "UPLOADED" || document.status === "PROCESSING") && (
++        <LivePipelineStatus documentId={document.id} initialStages={pipelineStages} />
+       )}
+ 
+       {isAnalyzed && (
+-        <div className="grid gap-6 lg:grid-cols-[1fr_380px] lg:items-start">
+-          {/* Left: analysis, extracted text, chunks */}
+-          <div className="min-w-0 space-y-6">
+-            <AnalysisPanel analysis={document.analysis} />
+-
+-            {document.extractedText && (
+-              <ExtractedTextPanel text={document.extractedText} />
+-            )}
+-
+-            <div>
+-              <h2 className="mb-3 text-sm font-medium text-muted-foreground">
+-                Chunks ({chunks.length})
+-              </h2>
+-              <ChunkList chunks={chunks} />
+-            </div>
+-          </div>
+-
+-          {/* Right: chat, pinned alongside the content on large screens */}
+-          <Card
+-            className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden p-0 lg:sticky lg:top-8"
+-          >
+-            <CardContent className="flex-1 overflow-hidden p-0">
+-              <DocumentChat documentId={document.id} />
+-            </CardContent>
+-          </Card>
+-        </div>
++        <DocumentWorkspaceSplit
++          documentId={document.id}
++          mimeType={document.mimeType}
++          analysis={document.analysis}
++          pageCount={document.pageCount}
++          chunkCount={chunkCount}
++          chunks={chunks}
++          extractedText={document.extractedText}
++        />
+       )}
+     </main>
+   );
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index 3a6b641..8877c6a 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -1,20 +1,41 @@
++import { auth } from "@clerk/nextjs/server";
++
++import { prisma } from "@/lib/prisma";
++import { DashboardHeader } from "@/components/features/dashboard/dashboard-header";
++import { StatCardsGrid } from "@/components/features/dashboard/stat-cards-grid";
++import { ActivityChart } from "@/components/features/dashboard/activity-chart";
++import { RiskDistributionChart } from "@/components/features/dashboard/risk-distribution-chart";
++import { DocumentTypesChart } from "@/components/features/dashboard/document-types-chart";
+ import { DocumentsWorkspace } from "@/components/features/docuements/documents-workspace";
+ 
+-export default function DashboardPage() {
++export default async function DashboardPage() {
++  const { userId: clerkId } = await auth();
++  const user = clerkId
++    ? await prisma.user.findUnique({
++        where: { clerkId },
++        select: { name: true },
++      })
++    : null;
++
+   return (
+-    <main className="mx-auto max-w-6xl p-8">
+-      <div className="mb-8">
+-        <h1 className="text-3xl font-semibold">
+-          AI Document Analyzer
+-        </h1>
++    <main className="mx-auto max-w-6xl space-y-8 p-8">
++      <DashboardHeader userName={user?.name} />
+ 
+-        <p className="mt-2 text-muted-foreground">
+-          Upload documents and turn them into
+-          searchable knowledge.
+-        </p>
++      <StatCardsGrid />
++
++      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
++        <div className="lg:col-span-2">
++          <ActivityChart />
++        </div>
++        <RiskDistributionChart />
++        <div className="lg:col-span-2">
++          <DocumentTypesChart />
++        </div>
+       </div>
+ 
+-      <DocumentsWorkspace />
++      <div id="upload-zone">
++        <DocumentsWorkspace />
++      </div>
+     </main>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/features/dashboard/activity-chart.tsx b/components/features/dashboard/activity-chart.tsx
+new file mode 100644
+index 0000000..40c6127
+--- /dev/null
++++ b/components/features/dashboard/activity-chart.tsx
+@@ -0,0 +1,97 @@
++"use client";
++
++import {
++  Area,
++  AreaChart,
++  CartesianGrid,
++  ResponsiveContainer,
++  Tooltip,
++  XAxis,
++} from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++export function ActivityChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const total = data?.activity.reduce((sum, d) => sum + d.count, 0) ?? 0;
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Document Activity</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Uploads over the last 30 days
++        </p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !data || total === 0 ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No activity yet</p>
++            <p className="text-xs text-muted-foreground">
++              Upload and analyze documents to see activity trends here.
++            </p>
++          </div>
++        ) : (
++          <ResponsiveContainer width="100%" height={220}>
++            <AreaChart data={data.activity} margin={{ left: -20, right: 8 }}>
++              <defs>
++                <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
++                  <stop
++                    offset="5%"
++                    stopColor="var(--color-chart-1)"
++                    stopOpacity={0.35}
++                  />
++                  <stop
++                    offset="95%"
++                    stopColor="var(--color-chart-1)"
++                    stopOpacity={0}
++                  />
++                </linearGradient>
++              </defs>
++              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
++              <XAxis
++                dataKey="date"
++                tickFormatter={(value: string) =>
++                  new Date(value).toLocaleDateString(undefined, {
++                    month: "short",
++                    day: "numeric",
++                  })
++                }
++                tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
++                axisLine={false}
++                tickLine={false}
++                interval={4}
++              />
++              <Tooltip
++                labelFormatter={(value: string) =>
++                  new Date(value).toLocaleDateString(undefined, {
++                    month: "short",
++                    day: "numeric",
++                  })
++                }
++                contentStyle={{
++                  background: "var(--color-card)",
++                  border: "1px solid var(--color-border)",
++                  borderRadius: 8,
++                  fontSize: 12,
++                }}
++              />
++              <Area
++                type="monotone"
++                dataKey="count"
++                name="Documents"
++                stroke="var(--color-chart-1)"
++                strokeWidth={2}
++                fill="url(#activityFill)"
++              />
++            </AreaChart>
++          </ResponsiveContainer>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/dashboard-header.tsx b/components/features/dashboard/dashboard-header.tsx
+new file mode 100644
+index 0000000..e8cf9fd
+--- /dev/null
++++ b/components/features/dashboard/dashboard-header.tsx
+@@ -0,0 +1,37 @@
++"use client";
++
++import { UploadIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++
++export function DashboardHeader({ userName }: { userName?: string | null }) {
++  const greeting = userName ? `Welcome back, ${userName}` : "Welcome back";
++
++  return (
++    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
++      <div>
++        <p className="text-xs font-medium uppercase tracking-wide text-primary">
++          Dilligence
++        </p>
++        <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
++          {greeting}
++        </h1>
++        <p className="mt-1 text-sm text-muted-foreground">
++          Here&apos;s what&apos;s happening across your documents.
++        </p>
++      </div>
++
++      <Button
++        size="lg"
++        onClick={() =>
++          document
++            .getElementById("upload-zone")
++            ?.scrollIntoView({ behavior: "smooth", block: "center" })
++        }
++      >
++        <UploadIcon className="size-4" />
++        Upload Document
++      </Button>
++    </div>
++  );
++}
+diff --git a/components/features/dashboard/document-types-chart.tsx b/components/features/dashboard/document-types-chart.tsx
+new file mode 100644
+index 0000000..1dd772f
+--- /dev/null
++++ b/components/features/dashboard/document-types-chart.tsx
+@@ -0,0 +1,65 @@
++"use client";
++
++import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++import { labelForMimeType } from "@/lib/mime-labels";
++
++function labelFor(mimeType: string) {
++  return labelForMimeType(mimeType);
++}
++
++export function DocumentTypesChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const chartData = data?.documentTypes
++    .map((t) => ({ type: labelFor(t.mimeType), count: t.count }))
++    .sort((a, b) => b.count - a.count);
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Document Types</CardTitle>
++        <p className="text-xs text-muted-foreground">By file format</p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !chartData || chartData.length === 0 ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No documents yet</p>
++            <p className="text-xs text-muted-foreground">
++              Upload documents to see the format breakdown.
++            </p>
++          </div>
++        ) : (
++          <ResponsiveContainer width="100%" height={220}>
++            <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 16 }}>
++              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--color-border)" />
++              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
++              <YAxis
++                type="category"
++                dataKey="type"
++                tick={{ fontSize: 12, fill: "var(--color-foreground)" }}
++                axisLine={false}
++                tickLine={false}
++                width={64}
++              />
++              <Tooltip
++                contentStyle={{
++                  background: "var(--color-card)",
++                  border: "1px solid var(--color-border)",
++                  borderRadius: 8,
++                  fontSize: 12,
++                }}
++              />
++              <Bar dataKey="count" name="Documents" fill="var(--color-chart-3)" radius={[0, 4, 4, 0]} barSize={18} />
++            </BarChart>
++          </ResponsiveContainer>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/risk-distribution-chart.tsx b/components/features/dashboard/risk-distribution-chart.tsx
+new file mode 100644
+index 0000000..f3ff16a
+--- /dev/null
++++ b/components/features/dashboard/risk-distribution-chart.tsx
+@@ -0,0 +1,91 @@
++"use client";
++
++import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++const RISK_COLORS: Record<string, string> = {
++  Low: "var(--color-chart-2)",
++  Medium: "var(--color-chart-4)",
++  High: "var(--color-chart-5)",
++  Critical: "var(--color-destructive)",
++};
++
++export function RiskDistributionChart() {
++  const { data, isLoading } = useDocumentStatsQuery();
++
++  const chartData = data
++    ? [
++        { name: "Low", value: data.riskDistribution.low },
++        { name: "Medium", value: data.riskDistribution.medium },
++        { name: "High", value: data.riskDistribution.high },
++        { name: "Critical", value: data.riskDistribution.critical },
++      ].filter((d) => d.value > 0)
++    : [];
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Risk Distribution</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Across all analyzed documents
++        </p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {isLoading ? (
++          <div className="h-[220px] w-full animate-pulse rounded-lg bg-muted" />
++        ) : !data || !data.hasRiskData ? (
++          <div className="flex h-[220px] flex-col items-center justify-center gap-1 text-center">
++            <p className="text-sm font-medium">No risk data yet</p>
++            <p className="text-xs text-muted-foreground">
++              Risk levels will appear here once documents are analyzed.
++            </p>
++          </div>
++        ) : (
++          <div className="flex items-center gap-4">
++            <ResponsiveContainer width="100%" height={200}>
++              <PieChart>
++                <Pie
++                  data={chartData}
++                  dataKey="value"
++                  nameKey="name"
++                  innerRadius={55}
++                  outerRadius={80}
++                  paddingAngle={2}
++                >
++                  {chartData.map((entry) => (
++                    <Cell key={entry.name} fill={RISK_COLORS[entry.name]} />
++                  ))}
++                </Pie>
++                <Tooltip
++                  contentStyle={{
++                    background: "var(--color-card)",
++                    border: "1px solid var(--color-border)",
++                    borderRadius: 8,
++                    fontSize: 12,
++                  }}
++                />
++              </PieChart>
++            </ResponsiveContainer>
++
++            <ul className="shrink-0 space-y-2 text-sm">
++              {chartData.map((entry) => (
++                <li key={entry.name} className="flex items-center gap-2">
++                  <span
++                    className="size-2.5 rounded-full"
++                    style={{ background: RISK_COLORS[entry.name] }}
++                  />
++                  <span className="text-muted-foreground">{entry.name}</span>
++                  <span className="font-medium tabular-nums">
++                    {entry.value}
++                  </span>
++                </li>
++              ))}
++            </ul>
++          </div>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/stat-card.tsx b/components/features/dashboard/stat-card.tsx
+new file mode 100644
+index 0000000..8185f78
+--- /dev/null
++++ b/components/features/dashboard/stat-card.tsx
+@@ -0,0 +1,45 @@
++import { cn } from "cn";
++import type { LucideIcon } from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++
++export function StatCard({
++  label,
++  value,
++  icon: Icon,
++  hint,
++  className,
++}: {
++  label: string;
++  value: string | number;
++  icon: LucideIcon;
++  hint?: string;
++  className?: string;
++}) {
++  return (
++    <Card
++      className={cn(
++        "transition-all duration-200 hover:shadow-md hover:ring-foreground/15",
++        className
++      )}
++    >
++      <CardContent className="flex flex-row items-start justify-between gap-3">
++        <div className="min-w-0">
++          <p className="text-sm text-muted-foreground">{label}</p>
++          <p className="mt-1.5 text-3xl font-semibold tabular-nums tracking-tight">
++            {value}
++          </p>
++          {hint && (
++            <p className="mt-1 truncate text-xs text-muted-foreground">
++              {hint}
++            </p>
++          )}
++        </div>
++
++        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
++          <Icon className="size-4.5 text-primary" />
++        </div>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/dashboard/stat-cards-grid.tsx b/components/features/dashboard/stat-cards-grid.tsx
+new file mode 100644
+index 0000000..a9c3519
+--- /dev/null
++++ b/components/features/dashboard/stat-cards-grid.tsx
+@@ -0,0 +1,91 @@
++"use client";
++
++import {
++  FileStackIcon,
++  ShieldCheckIcon,
++  ShieldAlertIcon,
++  GaugeIcon,
++  CalendarClockIcon,
++} from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { StatCard } from "@/components/features/dashboard/stat-card";
++import { useDocumentStatsQuery } from "@/lib/queries/documents";
++
++function StatCardSkeleton() {
++  return (
++    <Card>
++      <CardContent className="flex flex-row items-start justify-between gap-3">
++        <div className="w-full space-y-2">
++          <div className="h-3.5 w-24 animate-pulse rounded bg-muted" />
++          <div className="h-7 w-16 animate-pulse rounded bg-muted" />
++        </div>
++        <div className="size-9 shrink-0 animate-pulse rounded-lg bg-muted" />
++      </CardContent>
++    </Card>
++  );
++}
++
++export function StatCardsGrid() {
++  const { data, isLoading, error } = useDocumentStatsQuery();
++
++  if (isLoading) {
++    return (
++      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
++        {Array.from({ length: 5 }).map((_, i) => (
++          <StatCardSkeleton key={i} />
++        ))}
++      </div>
++    );
++  }
++
++  if (error || !data) {
++    return (
++      <Card>
++        <CardContent className="py-6 text-center text-sm text-muted-foreground">
++          Couldn&apos;t load your metrics right now. Try refreshing the page.
++        </CardContent>
++      </Card>
++    );
++  }
++
++  return (
++    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
++      <StatCard
++        label="Total Documents"
++        value={data.totalDocuments}
++        icon={FileStackIcon}
++        hint={
++          data.totalDocuments === 0 ? "Upload your first document" : undefined
++        }
++      />
++      <StatCard
++        label="Documents Analyzed"
++        value={data.analyzedCount}
++        icon={ShieldCheckIcon}
++        hint={
++          data.totalDocuments > 0
++            ? `${Math.round((data.analyzedCount / data.totalDocuments) * 100)}% of total`
++            : undefined
++        }
++      />
++      <StatCard
++        label="High Risk Documents"
++        value={data.hasRiskData ? data.highRiskCount : "—"}
++        icon={ShieldAlertIcon}
++        hint={data.hasRiskData ? "Risk score ≥ 67" : "No analysis yet"}
++      />
++      <StatCard
++        label="Average Risk Score"
++        value={data.hasRiskData ? `${data.avgRiskScore}` : "—"}
++        icon={GaugeIcon}
++        hint={data.hasRiskData ? "out of 100" : "No analysis yet"}
++      />
++      <StatCard
++        label="Processed This Month"
++        value={data.processedThisMonth}
++        icon={CalendarClockIcon}
++      />
++    </div>
++  );
++}
+diff --git a/components/features/docuements/analysis-extras.tsx b/components/features/docuements/analysis-extras.tsx
+new file mode 100644
+index 0000000..2a121e4
+--- /dev/null
++++ b/components/features/docuements/analysis-extras.tsx
+@@ -0,0 +1,80 @@
++import { cn } from "cn";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { RISK_TONE_CLASSES } from "@/lib/analysis-view";
++import type { ActionItem, Entity } from "@/types/analysis";
++
++const ENTITY_TYPE_LABEL: Record<Entity["type"], string> = {
++  person: "Person",
++  organization: "Organization",
++  location: "Location",
++  product: "Product",
++  other: "Other",
++};
++
++export function EntitiesCard({ entities }: { entities: Entity[] }) {
++  if (entities.length === 0) return null;
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Entities</CardTitle>
++      </CardHeader>
++      <CardContent>
++        <div className="flex flex-wrap gap-2">
++          {entities.map((entity, index) => (
++            <span
++              key={index}
++              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs"
++              title={ENTITY_TYPE_LABEL[entity.type]}
++            >
++              <span className="font-medium">{entity.name}</span>
++              <span className="text-muted-foreground">
++                {ENTITY_TYPE_LABEL[entity.type]}
++              </span>
++            </span>
++          ))}
++        </div>
++      </CardContent>
++    </Card>
++  );
++}
++
++const PRIORITY_TONE: Record<ActionItem["priority"], "low" | "medium" | "high"> = {
++  low: "low",
++  medium: "medium",
++  high: "high",
++};
++
++export function ActionItemsCard({ actionItems }: { actionItems: ActionItem[] }) {
++  if (actionItems.length === 0) return null;
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Action Items</CardTitle>
++      </CardHeader>
++      <CardContent>
++        <ul className="space-y-2.5">
++          {actionItems.map((item, index) => {
++            const toneClasses = RISK_TONE_CLASSES[PRIORITY_TONE[item.priority]];
++            return (
++              <li key={index} className="flex items-start gap-2.5 text-sm">
++                <span
++                  className={cn(
++                    "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase",
++                    toneClasses.bg,
++                    toneClasses.text
++                  )}
++                >
++                  {item.priority}
++                </span>
++                <span>{item.action}</span>
++              </li>
++            );
++          })}
++        </ul>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/analysis-overview.tsx b/components/features/docuements/analysis-overview.tsx
+new file mode 100644
+index 0000000..8b42fb6
+--- /dev/null
++++ b/components/features/docuements/analysis-overview.tsx
+@@ -0,0 +1,79 @@
++import { SparklesIcon } from "lucide-react";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { RiskScoreCard } from "@/components/features/docuements/risk-score-card";
++import { DocumentStatsRow } from "@/components/features/docuements/document-stats-row";
++import { SummaryCard } from "@/components/features/docuements/summary-card";
++import { FindingsList } from "@/components/features/docuements/findings-list";
++import { RiskCategoryBreakdown } from "@/components/features/docuements/risk-category-breakdown";
++import { EntitiesCard, ActionItemsCard } from "@/components/features/docuements/analysis-extras";
++import {
++  parseActionItems,
++  parseEntities,
++  parseKeyFindings,
++  parseRisks,
++} from "@/lib/analysis-view";
++
++type AnalysisData = {
++  summary: string | null;
++  riskScore: number | null;
++  keyFindings: unknown;
++  risks: unknown;
++  entities: unknown;
++  actionItems: unknown;
++} | null;
++
++export function AnalysisOverview({
++  analysis,
++  pageCount,
++  chunkCount,
++  onSelectPage,
++}: {
++  analysis: AnalysisData;
++  pageCount: number | null;
++  chunkCount: number;
++  onSelectPage?: (page: number) => void;
++}) {
++  if (!analysis) {
++    return (
++      <Card>
++        <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
++          <SparklesIcon className="size-6 text-muted-foreground" />
++          <p className="text-sm font-medium">No AI insights yet</p>
++          <p className="text-sm text-muted-foreground">
++            Summary, risks, and key findings will appear here once
++            diligence analysis is generated for this document.
++          </p>
++        </CardContent>
++      </Card>
++    );
++  }
++
++  const keyFindings = parseKeyFindings(analysis.keyFindings);
++  const risks = parseRisks(analysis.risks);
++  const entities = parseEntities(analysis.entities);
++  const actionItems = parseActionItems(analysis.actionItems);
++
++  return (
++    <div className="space-y-4">
++      <RiskScoreCard score={analysis.riskScore} />
++
++      <DocumentStatsRow
++        pageCount={pageCount}
++        chunkCount={chunkCount}
++        findingsCount={keyFindings.length}
++        risksCount={risks.length}
++      />
++
++      <SummaryCard summary={analysis.summary} />
++
++      <FindingsList keyFindings={keyFindings} risks={risks} onSelectPage={onSelectPage} />
++
++      <RiskCategoryBreakdown />
++
++      <EntitiesCard entities={entities} />
++
++      <ActionItemsCard actionItems={actionItems} />
++    </div>
++  );
++}
+diff --git a/components/features/docuements/analysis-panel.tsx b/components/features/docuements/analysis-panel.tsx
+deleted file mode 100644
+index 1b1be5a..0000000
+--- a/components/features/docuements/analysis-panel.tsx
++++ /dev/null
+@@ -1,105 +0,0 @@
+-import { SparklesIcon } from "lucide-react";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-
+-type AnalysisData = {
+-  summary: string | null;
+-  keyFindings: unknown;
+-  risks: unknown;
+-  entities: unknown;
+-  actionItems: unknown;
+-} | null;
+-
+-function renderListField(value: unknown) {
+-  if (!value) return null;
+-
+-  const items = Array.isArray(value) ? value : [value];
+-  if (items.length === 0) return null;
+-
+-  return (
+-    <ul className="list-disc space-y-1 pl-5 text-sm">
+-      {items.map((item, index) => (
+-        <li key={index}>
+-          {typeof item === "string" ? item : JSON.stringify(item)}
+-        </li>
+-      ))}
+-    </ul>
+-  );
+-}
+-
+-export function AnalysisPanel({ analysis }: { analysis: AnalysisData }) {
+-  const hasContent =
+-    analysis &&
+-    (analysis.summary ||
+-      analysis.keyFindings ||
+-      analysis.risks ||
+-      analysis.entities ||
+-      analysis.actionItems);
+-
+-  if (!hasContent) {
+-    return (
+-      <Card>
+-        <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+-          <SparklesIcon className="size-6 text-muted-foreground" />
+-          <p className="text-sm font-medium">No AI insights yet</p>
+-          <p className="text-sm text-muted-foreground">
+-            Summary, risks, and key findings will appear here once
+-            diligence analysis is generated for this document.
+-          </p>
+-        </CardContent>
+-      </Card>
+-    );
+-  }
+-
+-  return (
+-    <div className="space-y-4">
+-      {analysis.summary && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle>Summary</CardTitle>
+-          </CardHeader>
+-          <CardContent>
+-            <p className="text-sm text-muted-foreground">
+-              {analysis.summary}
+-            </p>
+-          </CardContent>
+-        </Card>
+-      )}
+-
+-      {!!analysis.risks && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle>Risks</CardTitle>
+-          </CardHeader>
+-          <CardContent>{renderListField(analysis.risks)}</CardContent>
+-        </Card>
+-      )}
+-
+-      {!!analysis.keyFindings && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle>Key findings</CardTitle>
+-          </CardHeader>
+-          <CardContent>{renderListField(analysis.keyFindings)}</CardContent>
+-        </Card>
+-      )}
+-
+-      {!!analysis.actionItems && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle>Action items</CardTitle>
+-          </CardHeader>
+-          <CardContent>{renderListField(analysis.actionItems)}</CardContent>
+-        </Card>
+-      )}
+-
+-      {!!analysis.entities && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle>Entities</CardTitle>
+-          </CardHeader>
+-          <CardContent>{renderListField(analysis.entities)}</CardContent>
+-        </Card>
+-      )}
+-    </div>
+-  );
+-}
+diff --git a/components/features/docuements/auto-refresh.tsx b/components/features/docuements/auto-refresh.tsx
+deleted file mode 100644
+index 81b0969..0000000
+--- a/components/features/docuements/auto-refresh.tsx
++++ /dev/null
+@@ -1,15 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-
+-export function AutoRefresh({ intervalMs = 4000 }: { intervalMs?: number }) {
+-  const router = useRouter();
+-
+-  useEffect(() => {
+-    const interval = setInterval(() => router.refresh(), intervalMs);
+-    return () => clearInterval(interval);
+-  }, [router, intervalMs]);
+-
+-  return null;
+-}
+diff --git a/components/features/docuements/document-card.tsx b/components/features/docuements/document-card.tsx
+index b278acc..e71581e 100644
+--- a/components/features/docuements/document-card.tsx
++++ b/components/features/docuements/document-card.tsx
+@@ -1,11 +1,30 @@
+ import Link from "next/link";
+ import { FileImageIcon, FileTextIcon } from "lucide-react";
++import { cn } from "cn";
+ 
+ import { Card, CardContent } from "@/components/ui/card";
+ import { DocumentStatusBadge } from "@/components/features/docuements/document-status-badge";
+ import { formatBytes, formatRelativeTime } from "@/lib/format";
++import { labelForMimeType } from "@/lib/mime-labels";
++import { riskScoreLabel, RISK_TONE_CLASSES } from "@/lib/analysis-view";
+ import type { DocumentSummary } from "@/types/document";
+ 
++function RiskBadge({ score }: { score: number }) {
++  const { label, tone } = riskScoreLabel(score);
++  const toneClasses = RISK_TONE_CLASSES[tone];
++  return (
++    <span
++      className={cn(
++        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
++        toneClasses.bg,
++        toneClasses.text
++      )}
++    >
++      {label.replace(" RISK", "")} · {score}
++    </span>
++  );
++}
++
+ export function DocumentCard({ document }: { document: DocumentSummary }) {
+   const isImage = document.mimeType.startsWith("image/");
+   const Icon = isImage ? FileImageIcon : FileTextIcon;
+@@ -21,6 +40,8 @@ export function DocumentCard({ document }: { document: DocumentSummary }) {
+           <div className="min-w-0 flex-1">
+             <p className="truncate text-sm font-medium">{document.name}</p>
+             <p className="mt-0.5 text-xs text-muted-foreground">
++              {labelForMimeType(document.mimeType)}
++              {" · "}
+               {formatBytes(document.size)}
+               {document.pageCount ? ` · ${document.pageCount} pages` : ""}
+               {" · "}
+@@ -28,6 +49,10 @@ export function DocumentCard({ document }: { document: DocumentSummary }) {
+             </p>
+           </div>
+ 
++          {document.riskScore !== null && (
++            <RiskBadge score={document.riskScore} />
++          )}
++
+           <DocumentStatusBadge status={document.status} className="shrink-0" />
+         </CardContent>
+       </Card>
+diff --git a/components/features/docuements/document-chat.tsx b/components/features/docuements/document-chat.tsx
+index 34504ed..42b0a6f 100644
+--- a/components/features/docuements/document-chat.tsx
++++ b/components/features/docuements/document-chat.tsx
+@@ -1,8 +1,13 @@
+ "use client";
+ 
+-import { FormEvent, useState } from "react";
++import { KeyboardEvent, useEffect, useRef, useState } from "react";
++import { AlertCircleIcon, SendIcon, SparklesIcon } from "lucide-react";
++import { cn } from "cn";
+ 
++import { Button } from "@/components/ui/button";
+ import { useDocumentChatMutation } from "@/lib/queries/documents";
++import { buildSuggestedQuestions } from "@/lib/chat-suggestions";
++import { parseEntities, parseKeyFindings, parseRisks } from "@/lib/analysis-view";
+ 
+ type Citation = {
+   chunkId: string;
+@@ -11,27 +16,40 @@ type Citation = {
+   score: number;
+ };
+ 
+-type Message = {
+-  role: "user" | "assistant";
+-  content: string;
+-  citations?: Citation[];
+-};
+-
+-type DocumentChatProps = {
++type Message =
++  | { role: "user"; content: string }
++  | { role: "assistant"; content: string; citations: Citation[] }
++  | { role: "error"; content: string };
++
++type AnalysisData = {
++  summary: string | null;
++  keyFindings: unknown;
++  risks: unknown;
++  entities: unknown;
++} | null;
++
++export function DocumentChat({
++  documentId,
++  analysis,
++  onSelectPage,
++}: {
+   documentId: string;
+-};
+-
+-export function DocumentChat({ documentId }: DocumentChatProps) {
++  analysis?: AnalysisData;
++  onSelectPage?: (page: number) => void;
++}) {
+   const [question, setQuestion] = useState("");
+   const [messages, setMessages] = useState<Message[]>([]);
++  const scrollRef = useRef<HTMLDivElement>(null);
+ 
+   const chatMutation = useDocumentChatMutation(documentId);
++  const loading = chatMutation.isPending;
+ 
+-  function handleSubmit(event: FormEvent) {
+-    event.preventDefault();
++  useEffect(() => {
++    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
++  }, [messages, loading]);
+ 
+-    const trimmed = question.trim();
+-    if (!trimmed || chatMutation.isPending) return;
++  function ask(trimmed: string) {
++    if (!trimmed || loading) return;
+ 
+     setMessages((current) => [...current, { role: "user", content: trimmed }]);
+     setQuestion("");
+@@ -40,123 +58,159 @@ export function DocumentChat({ documentId }: DocumentChatProps) {
+       onSuccess: (data) => {
+         setMessages((current) => [
+           ...current,
+-          {
+-            role: "assistant",
+-            content: data.answer,
+-            citations: data.citations,
+-          },
++          { role: "assistant", content: data.answer, citations: data.citations },
+         ]);
+       },
+       onError: (error) => {
+         setMessages((current) => [
+           ...current,
+           {
+-            role: "assistant",
++            role: "error",
+             content:
+               error instanceof Error
+                 ? error.message
+-                : "Something went wrong.",
++                : "Something went wrong answering that. Try again.",
+           },
+         ]);
+       },
+     });
+   }
+ 
+-  const loading = chatMutation.isPending;
++  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
++    if (event.key === "Enter" && !event.shiftKey) {
++      event.preventDefault();
++      ask(question.trim());
++    }
++  }
++
++  const suggestions = buildSuggestedQuestions({
++    hasSummary: !!analysis?.summary,
++    risks: parseRisks(analysis?.risks),
++    keyFindings: parseKeyFindings(analysis?.keyFindings),
++    entities: parseEntities(analysis?.entities),
++  });
+ 
+   return (
+     <div className="flex h-full flex-col">
+-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
++      <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4">
+         {messages.length === 0 && (
+-          <div className="rounded-lg border p-6">
+-            <h3 className="font-semibold">Ask this document</h3>
++          <div className="rounded-xl border border-border bg-muted/30 p-5">
++            <div className="flex items-center gap-2">
++              <SparklesIcon className="size-4 text-primary" />
++              <h3 className="text-sm font-semibold">Ask your document</h3>
++            </div>
+ 
+             <p className="mt-2 text-sm text-muted-foreground">
+-              Ask questions about the document and I&apos;ll provide answers
+-              with page references.
++              Ask a question and get an answer grounded in this document,
++              with page references you can jump to.
+             </p>
+ 
+-            <div className="mt-4 flex flex-wrap gap-2">
+-              {[
+-                "Summarize this document",
+-                "What are the major risks?",
+-                "What are the key financial figures?",
+-                "What are the important dates?",
+-              ].map((suggestion) => (
+-                <button
+-                  key={suggestion}
+-                  type="button"
+-                  onClick={() => setQuestion(suggestion)}
+-                  className="rounded-full border px-3 py-1.5 text-sm hover:bg-muted"
+-                >
+-                  {suggestion}
+-                </button>
+-              ))}
+-            </div>
++            {suggestions.length > 0 && (
++              <div className="mt-4 flex flex-wrap gap-2">
++                {suggestions.map((suggestion) => (
++                  <button
++                    key={suggestion}
++                    type="button"
++                    onClick={() => ask(suggestion)}
++                    className="rounded-full border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
++                  >
++                    {suggestion}
++                  </button>
++                ))}
++              </div>
++            )}
+           </div>
+         )}
+ 
+-        {messages.map((message, index) => (
+-          <div
+-            key={index}
+-            className={
+-              message.role === "user"
+-                ? "ml-auto max-w-[80%] rounded-xl bg-black p-4 text-white"
+-                : "max-w-[90%] rounded-xl border p-4"
+-            }
+-          >
+-            <div className="whitespace-pre-wrap text-sm">
+-              {message.content}
+-            </div>
+-
+-            {message.citations && message.citations.length > 0 && (
+-              <div className="mt-4 border-t pt-3">
+-                <p className="mb-2 text-xs font-medium">Sources</p>
+-
+-                <div className="flex flex-wrap gap-2">
++        {messages.map((message, index) => {
++          if (message.role === "user") {
++            return (
++              <div
++                key={index}
++                className="ml-auto max-w-[85%] rounded-xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground"
++              >
++                {message.content}
++              </div>
++            );
++          }
++
++          if (message.role === "error") {
++            return (
++              <div
++                key={index}
++                className="flex max-w-[90%] items-start gap-2 rounded-xl rounded-bl-sm border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-sm text-destructive"
++              >
++                <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
++                <span>{message.content}</span>
++              </div>
++            );
++          }
++
++          return (
++            <div
++              key={index}
++              className="max-w-[90%] rounded-xl rounded-bl-sm border border-border bg-card px-4 py-3"
++            >
++              <p className="whitespace-pre-wrap text-sm">{message.content}</p>
++
++              {message.citations.length > 0 && (
++                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
++                  <span className="text-xs font-medium text-muted-foreground">
++                    Sources:
++                  </span>
+                   {message.citations.map((citation) => (
+                     <button
+                       key={citation.chunkId}
+                       type="button"
+-                      className="rounded-md border px-2 py-1 text-xs hover:bg-muted"
++                      onClick={() => onSelectPage?.(citation.pageNumber)}
++                      disabled={!onSelectPage}
++                      className={cn(
++                        "rounded-md border border-border px-2 py-0.5 text-xs",
++                        onSelectPage && "hover:border-primary hover:text-primary"
++                      )}
+                     >
+                       Page {citation.pageNumber}
+                     </button>
+                   ))}
+                 </div>
+-              </div>
+-            )}
+-          </div>
+-        ))}
++              )}
++            </div>
++          );
++        })}
+ 
+         {loading && (
+-          <div className="max-w-[90%] rounded-xl border p-4">
+-            <div className="flex items-center gap-2 text-sm">
+-              <div className="h-2 w-2 animate-pulse rounded-full bg-current" />
+-              Searching document...
+-            </div>
++          <div className="flex max-w-[90%] items-center gap-2 rounded-xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
++            <span className="flex gap-1">
++              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
++              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
++              <span className="size-1.5 animate-bounce rounded-full bg-current" />
++            </span>
++            Reading the document…
+           </div>
+         )}
+       </div>
+ 
+-      <form onSubmit={handleSubmit} className="border-t p-4">
+-        <div className="flex gap-2">
+-          <input
++      <div className="border-t border-border p-3">
++        <div className="flex items-end gap-2">
++          <textarea
+             value={question}
+             onChange={(event) => setQuestion(event.target.value)}
+-            placeholder="Ask anything about this document..."
+-            className="flex-1 rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2"
++            onKeyDown={handleKeyDown}
++            placeholder="Ask anything about this document… (Enter to send, Shift+Enter for a new line)"
++            rows={1}
++            className="max-h-32 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/50"
+           />
+ 
+-          <button
+-            type="submit"
++          <Button
++            size="icon"
++            onClick={() => ask(question.trim())}
+             disabled={loading || !question.trim()}
+-            className="rounded-lg bg-black px-5 py-3 text-sm text-white disabled:opacity-50"
++            aria-label="Send question"
+           >
+-            {loading ? "..." : "Send"}
+-          </button>
++            <SendIcon className="size-4" />
++          </Button>
+         </div>
+-      </form>
++      </div>
+     </div>
+   );
+ }
+diff --git a/components/features/docuements/document-library-toolbar.tsx b/components/features/docuements/document-library-toolbar.tsx
+new file mode 100644
+index 0000000..0781a71
+--- /dev/null
++++ b/components/features/docuements/document-library-toolbar.tsx
+@@ -0,0 +1,92 @@
++"use client";
++
++import { SearchIcon } from "lucide-react";
++import { cn } from "cn";
++
++export type DocumentFilter =
++  | "all"
++  | "processing"
++  | "analyzed"
++  | "high-risk"
++  | "medium-risk"
++  | "low-risk";
++
++const FILTERS: { value: DocumentFilter; label: string }[] = [
++  { value: "all", label: "All" },
++  { value: "processing", label: "Processing" },
++  { value: "analyzed", label: "Analyzed" },
++  { value: "high-risk", label: "High Risk" },
++  { value: "medium-risk", label: "Medium Risk" },
++  { value: "low-risk", label: "Low Risk" },
++];
++
++export function DocumentLibraryToolbar({
++  search,
++  onSearchChange,
++  filter,
++  onFilterChange,
++}: {
++  search: string;
++  onSearchChange: (value: string) => void;
++  filter: DocumentFilter;
++  onFilterChange: (value: DocumentFilter) => void;
++}) {
++  return (
++    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++      <div className="relative w-full sm:max-w-xs">
++        <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
++        <input
++          value={search}
++          onChange={(event) => onSearchChange(event.target.value)}
++          placeholder="Search documents…"
++          className="w-full rounded-lg border border-border bg-background py-2 pr-3 pl-9 text-sm outline-none focus:ring-2 focus:ring-ring/50"
++        />
++      </div>
++
++      <div className="flex flex-wrap gap-1.5">
++        {FILTERS.map((f) => (
++          <button
++            key={f.value}
++            type="button"
++            onClick={() => onFilterChange(f.value)}
++            className={cn(
++              "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
++              filter === f.value
++                ? "bg-foreground text-background"
++                : "bg-muted text-muted-foreground hover:text-foreground"
++            )}
++          >
++            {f.label}
++          </button>
++        ))}
++      </div>
++    </div>
++  );
++}
++
++export function applyDocumentFilter<
++  T extends { status: string; riskScore: number | null; name: string },
++>(documents: T[], search: string, filter: DocumentFilter): T[] {
++  const query = search.trim().toLowerCase();
++
++  return documents.filter((doc) => {
++    if (query && !doc.name.toLowerCase().includes(query)) return false;
++
++    switch (filter) {
++      case "processing":
++        return doc.status === "UPLOADED" || doc.status === "PROCESSING";
++      case "analyzed":
++        return doc.status === "ANALYZED";
++      case "high-risk":
++        return doc.riskScore !== null && doc.riskScore >= 67;
++      case "medium-risk":
++        return (
++          doc.riskScore !== null && doc.riskScore >= 34 && doc.riskScore < 67
++        );
++      case "low-risk":
++        return doc.riskScore !== null && doc.riskScore < 34;
++      default:
++        return true;
++    }
++  });
++}
+diff --git a/components/features/docuements/document-list.tsx b/components/features/docuements/document-list.tsx
+index a98af1b..1e882b9 100644
+--- a/components/features/docuements/document-list.tsx
++++ b/components/features/docuements/document-list.tsx
+@@ -1,4 +1,4 @@
+-import { FileStackIcon } from "lucide-react";
++import { FileStackIcon, SearchXIcon } from "lucide-react";
+ 
+ import { DocumentCard } from "@/components/features/docuements/document-card";
+ import type { DocumentSummary } from "@/types/document";
+@@ -7,10 +7,15 @@ export function DocumentList({
+   documents,
+   isLoading,
+   error,
++  isFiltered = false,
+ }: {
+   documents: DocumentSummary[];
+   isLoading: boolean;
+   error: string | null;
++  /** True when `documents` is already empty because of an active
++   * search/filter, so the empty state can say so instead of implying
++   * the library itself has nothing in it. */
++  isFiltered?: boolean;
+ }) {
+   if (isLoading) {
+     return (
+@@ -33,6 +38,18 @@ export function DocumentList({
+     );
+   }
+ 
++  if (documents.length === 0 && isFiltered) {
++    return (
++      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center">
++        <SearchXIcon className="size-8 text-muted-foreground" />
++        <p className="mt-3 text-sm font-medium">No matching documents</p>
++        <p className="mt-1 text-sm text-muted-foreground">
++          Try a different search term or filter.
++        </p>
++      </div>
++    );
++  }
++
+   if (documents.length === 0) {
+     return (
+       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center">
+diff --git a/components/features/docuements/document-stats-row.tsx b/components/features/docuements/document-stats-row.tsx
+new file mode 100644
+index 0000000..b2eb525
+--- /dev/null
++++ b/components/features/docuements/document-stats-row.tsx
+@@ -0,0 +1,60 @@
++import { FileTextIcon, ListChecksIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
++
++function StatItem({
++  icon: Icon,
++  value,
++  label,
++}: {
++  icon: React.ElementType;
++  value: string | number;
++  label: string;
++}) {
++  return (
++    <div className="flex items-center gap-2.5">
++      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
++        <Icon className="size-4 text-muted-foreground" />
++      </div>
++      <div>
++        <p className="text-sm font-semibold tabular-nums leading-none">{value}</p>
++        <p className="mt-1 text-xs text-muted-foreground">{label}</p>
++      </div>
++    </div>
++  );
++}
++
++export function DocumentStatsRow({
++  pageCount,
++  chunkCount,
++  findingsCount,
++  risksCount,
++}: {
++  pageCount: number | null;
++  chunkCount: number;
++  findingsCount: number;
++  risksCount: number;
++}) {
++  return (
++    <div className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-card p-4 sm:grid-cols-4">
++      <StatItem
++        icon={FileTextIcon}
++        value={pageCount ?? "—"}
++        label={pageCount === 1 ? "Page" : "Pages"}
++      />
++      <StatItem
++        icon={SearchIcon}
++        value={chunkCount}
++        label="Chunks Indexed"
++      />
++      <StatItem
++        icon={ListChecksIcon}
++        value={findingsCount}
++        label={findingsCount === 1 ? "Key Finding" : "Key Findings"}
++      />
++      <StatItem
++        icon={TriangleAlertIcon}
++        value={risksCount}
++        label={risksCount === 1 ? "Risk Flagged" : "Risks Flagged"}
++      />
++    </div>
++  );
++}
+diff --git a/components/features/docuements/document-viewer.tsx b/components/features/docuements/document-viewer.tsx
+new file mode 100644
+index 0000000..b700d8e
+--- /dev/null
++++ b/components/features/docuements/document-viewer.tsx
+@@ -0,0 +1,86 @@
++"use client";
++
++import { AlertCircleIcon, RefreshCwIcon } from "lucide-react";
++
++import { Button } from "@/components/ui/button";
++import { useDocumentFileUrlQuery } from "@/lib/queries/documents";
++
++/**
++ * Renders the original file inline. For PDFs this uses the browser's own
++ * PDF viewer (via `<iframe>`), which supports jumping to a given page
++ * through the standard `#page=N` URL fragment — a real capability, not a
++ * simulated one. There's no text layer we control, so we can navigate to
++ * a page but can't highlight a specific clause within it; that would need
++ * a PDF.js-based renderer, which is a reasonable next step but out of
++ * scope for this pass.
++ */
++export function DocumentViewer({
++  documentId,
++  mimeType,
++  activePage,
++}: {
++  documentId: string;
++  mimeType: string;
++  activePage: number | null;
++}) {
++  const { data, isLoading, error, refetch, isRefetching } =
++    useDocumentFileUrlQuery(documentId);
++
++  if (isLoading) {
++    return (
++      <div className="flex h-full w-full items-center justify-center rounded-xl border border-border bg-muted/30">
++        <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
++          <div className="size-6 animate-spin rounded-full border-2 border-current border-t-transparent" />
++          Loading document…
++        </div>
++      </div>
++    );
++  }
++
++  if (error || !data) {
++    return (
++      <div className="flex h-full w-full flex-col items-center justify-center gap-3 rounded-xl border border-border bg-muted/30 text-center">
++        <AlertCircleIcon className="size-6 text-muted-foreground" />
++        <div>
++          <p className="text-sm font-medium">Couldn&apos;t load the document</p>
++          <p className="text-xs text-muted-foreground">
++            The preview link may have expired.
++          </p>
++        </div>
++        <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isRefetching}>
++          <RefreshCwIcon className={isRefetching ? "size-3.5 animate-spin" : "size-3.5"} />
++          Retry
++        </Button>
++      </div>
++    );
++  }
++
++  const isImage = mimeType.startsWith("image/");
++  const src = isImage
++    ? data.url
++    : activePage
++      ? `${data.url}#page=${activePage}`
++      : data.url;
++
++  if (isImage) {
++    return (
++      <div className="flex h-full w-full items-center justify-center overflow-auto rounded-xl border border-border bg-muted/30 p-4">
++        {/* eslint-disable-next-line @next/next/no-img-element -- external SAS-signed blob URL, not a local/static asset */}
++        <img
++          src={data.url}
++          alt="Document preview"
++          className="max-h-full max-w-full rounded-md object-contain shadow-sm"
++        />
++      </div>
++    );
++  }
++
++  return (
++    <iframe
++      key={src}
++      src={src}
++      title="Document preview"
++      className="h-full w-full rounded-xl border border-border bg-muted/30"
++    />
++  );
++}
+diff --git a/components/features/docuements/document-workspace-split.tsx b/components/features/docuements/document-workspace-split.tsx
+new file mode 100644
+index 0000000..dff9b0b
+--- /dev/null
++++ b/components/features/docuements/document-workspace-split.tsx
+@@ -0,0 +1,97 @@
++"use client";
++
++import { useState } from "react";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
++import { DocumentViewer } from "@/components/features/docuements/document-viewer";
++import { AnalysisOverview } from "@/components/features/docuements/analysis-overview";
++import { ExtractedTextPanel } from "@/components/features/docuements/extracted-text-panel";
++import { ChunkList } from "@/components/features/docuements/chunk-list";
++import { DocumentChat } from "@/components/features/docuements/document-chat";
++import type { DocumentChunkSummary } from "@/types/document";
++
++type AnalysisData = {
++  summary: string | null;
++  riskScore: number | null;
++  keyFindings: unknown;
++  risks: unknown;
++  entities: unknown;
++  actionItems: unknown;
++} | null;
++
++export function DocumentWorkspaceSplit({
++  documentId,
++  mimeType,
++  analysis,
++  pageCount,
++  chunkCount,
++  chunks,
++  extractedText,
++}: {
++  documentId: string;
++  mimeType: string;
++  analysis: AnalysisData;
++  pageCount: number | null;
++  chunkCount: number;
++  chunks: DocumentChunkSummary[];
++  extractedText: string | null;
++}) {
++  const [activePage, setActivePage] = useState<number | null>(null);
++
++  return (
++    <div className="grid gap-6 lg:grid-cols-[1fr_440px] lg:items-start">
++      {/* Left: original document */}
++      <div className="h-[calc(100vh-13rem)] min-h-[500px] lg:sticky lg:top-8">
++        <DocumentViewer
++          documentId={documentId}
++          mimeType={mimeType}
++          activePage={activePage}
++        />
++      </div>
++
++      {/* Right: AI analysis / ask, tabbed to keep the split screen from
++          turning into one very long scroll */}
++      <Card className="flex h-[calc(100vh-13rem)] min-h-[500px] flex-col overflow-hidden p-0 lg:sticky lg:top-8">
++        <Tabs defaultValue="analysis" className="flex h-full flex-col">
++          <div className="border-b border-border p-3">
++            <TabsList>
++              <TabsTrigger value="analysis">AI Analysis</TabsTrigger>
++              <TabsTrigger value="ask">Ask</TabsTrigger>
++            </TabsList>
++          </div>
++
++          <TabsContent value="analysis" className="flex-1 overflow-y-auto">
++            <CardContent className="space-y-4 py-4">
++              <AnalysisOverview
++                analysis={analysis}
++                pageCount={pageCount}
++                chunkCount={chunkCount}
++                onSelectPage={setActivePage}
++              />
++
++              {extractedText && <ExtractedTextPanel text={extractedText} />}
++
++              <div>
++                <h2 className="mb-3 text-sm font-medium text-muted-foreground">
++                  Chunks ({chunks.length})
++                </h2>
++                <ChunkList chunks={chunks} />
++              </div>
++            </CardContent>
++          </TabsContent>
++
++          <TabsContent value="ask" className="flex-1 overflow-hidden">
++            <CardContent className="h-full p-0">
++              <DocumentChat
++                documentId={documentId}
++                analysis={analysis}
++                onSelectPage={setActivePage}
++              />
++            </CardContent>
++          </TabsContent>
++        </Tabs>
++      </Card>
++    </div>
++  );
++}
+diff --git a/components/features/docuements/documents-workspace.tsx b/components/features/docuements/documents-workspace.tsx
+index 7c673fc..6ee2bcc 100644
+--- a/components/features/docuements/documents-workspace.tsx
++++ b/components/features/docuements/documents-workspace.tsx
+@@ -1,27 +1,51 @@
+ "use client";
+ 
++import { useState } from "react";
++
+ import { UploadZone } from "@/components/features/docuements/upload-zone";
+ import { DocumentList } from "@/components/features/docuements/document-list";
++import {
++  DocumentLibraryToolbar,
++  applyDocumentFilter,
++  type DocumentFilter,
++} from "@/components/features/docuements/document-library-toolbar";
+ import { useDocumentsQuery } from "@/lib/queries/documents";
+ 
+ export function DocumentsWorkspace() {
+   const { data: documents = [], isLoading, error } = useDocumentsQuery();
++  const [search, setSearch] = useState("");
++  const [filter, setFilter] = useState<DocumentFilter>("all");
++
++  const filteredDocuments = applyDocumentFilter(documents, search, filter);
++  const isFiltered = search.trim() !== "" || filter !== "all";
+ 
+   return (
+     <div className="space-y-8">
+       <UploadZone />
+ 
+-      <div>
+-        <h2 className="mb-4 text-sm font-medium text-muted-foreground">
+-          {documents.length > 0
+-            ? `${documents.length} document${documents.length === 1 ? "" : "s"}`
+-            : "Documents"}
+-        </h2>
++      <div className="space-y-4">
++        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++          <h2 className="text-sm font-medium text-muted-foreground">
++            {documents.length > 0
++              ? `${filteredDocuments.length} of ${documents.length} document${documents.length === 1 ? "" : "s"}`
++              : "Documents"}
++          </h2>
++        </div>
++
++        {documents.length > 0 && (
++          <DocumentLibraryToolbar
++            search={search}
++            onSearchChange={setSearch}
++            filter={filter}
++            onFilterChange={setFilter}
++          />
++        )}
+ 
+         <DocumentList
+-          documents={documents}
++          documents={filteredDocuments}
+           isLoading={isLoading}
+           error={error instanceof Error ? error.message : null}
++          isFiltered={isFiltered}
+         />
+       </div>
+     </div>
+diff --git a/components/features/docuements/findings-list.tsx b/components/features/docuements/findings-list.tsx
+new file mode 100644
+index 0000000..220f6e5
+--- /dev/null
++++ b/components/features/docuements/findings-list.tsx
+@@ -0,0 +1,121 @@
++import { cn } from "cn";
++import { ChevronDownIcon } from "lucide-react";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import type { KeyFinding, Risk } from "@/types/analysis";
++import { RISK_TONE_CLASSES, sortBySeverity } from "@/lib/analysis-view";
++
++type UnifiedItem = {
++  kind: "finding" | "risk";
++  title: string;
++  description: string;
++  severity: "low" | "medium" | "high";
++  pages: number[];
++};
++
++const SEVERITY_TONE: Record<"low" | "medium" | "high", "low" | "medium" | "high"> = {
++  low: "low",
++  medium: "medium",
++  high: "high",
++};
++
++function SeverityBadge({ severity }: { severity: "low" | "medium" | "high" }) {
++  const toneClasses = RISK_TONE_CLASSES[SEVERITY_TONE[severity]];
++  return (
++    <span
++      className={cn(
++        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
++        toneClasses.bg,
++        toneClasses.text
++      )}
++    >
++      {severity} risk
++    </span>
++  );
++}
++
++export function FindingsList({
++  keyFindings,
++  risks,
++  onSelectPage,
++}: {
++  keyFindings: KeyFinding[];
++  risks: Risk[];
++  onSelectPage?: (page: number) => void;
++}) {
++  const unified: UnifiedItem[] = sortBySeverity([
++    ...risks.map((r) => ({
++      kind: "risk" as const,
++      title: r.title,
++      description: r.description,
++      severity: r.severity,
++      pages: r.pages,
++    })),
++    ...keyFindings.map((f) => ({
++      kind: "finding" as const,
++      title: f.title,
++      description: f.description,
++      severity: f.importance,
++      pages: f.pages,
++    })),
++  ]);
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Key Findings</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Findings and flagged risks, ordered by severity
++        </p>
++      </CardHeader>
++      <CardContent>
++        {unified.length === 0 ? (
++          <p className="py-4 text-center text-sm text-muted-foreground">
++            No findings were flagged for this document.
++          </p>
++        ) : (
++          <ul className="divide-y divide-border">
++            {unified.map((item, index) => (
++              <li key={index}>
++                <details className="group py-3 first:pt-0 last:pb-0">
++                  <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
++                    <div className="min-w-0">
++                      <div className="flex items-center gap-2">
++                        <SeverityBadge severity={item.severity} />
++                        <p className="truncate text-sm font-medium">
++                          {item.title}
++                        </p>
++                      </div>
++                      {item.pages.length > 0 && (
++                        <button
++                          type="button"
++                          onClick={(e) => {
++                            e.preventDefault();
++                            onSelectPage?.(item.pages[0]);
++                          }}
++                          disabled={!onSelectPage}
++                          className={cn(
++                            "mt-1 text-xs text-muted-foreground",
++                            onSelectPage && "underline-offset-2 hover:text-primary hover:underline"
++                          )}
++                        >
++                          {item.pages.length === 1
++                            ? `Page ${item.pages[0]}`
++                            : `Pages ${item.pages.join(", ")}`}
++                        </button>
++                      )}
++                    </div>
++                    <ChevronDownIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
++                  </summary>
++                  <p className="mt-2 text-sm text-muted-foreground">
++                    {item.description}
++                  </p>
++                </details>
++              </li>
++            ))}
++          </ul>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/live-pipeline-status.tsx b/components/features/docuements/live-pipeline-status.tsx
+new file mode 100644
+index 0000000..4ab3f0a
+--- /dev/null
++++ b/components/features/docuements/live-pipeline-status.tsx
+@@ -0,0 +1,34 @@
++"use client";
++
++import { useEffect } from "react";
++import { useRouter } from "next/navigation";
++
++import { ProcessingPipeline } from "@/components/features/docuements/processing-pipeline";
++import { computePipelineStages, type PipelineStage } from "@/lib/pipeline";
++import { useDocumentPipelineStatusQuery } from "@/lib/queries/documents";
++
++export function LivePipelineStatus({
++  documentId,
++  initialStages,
++}: {
++  documentId: string;
++  initialStages: PipelineStage[];
++}) {
++  const router = useRouter();
++  const { data } = useDocumentPipelineStatusQuery(documentId, true);
++
++  const stages = data ? computePipelineStages(data) : initialStages;
++  const isComplete = stages.every((stage) => stage.status === "completed");
++
++  useEffect(() => {
++    if (isComplete) {
++      // The document detail page renders a completely different layout
++      // once analysis finishes (DocumentWorkspaceSplit instead of the
++      // pipeline card) — that comes from server data, so hand off to a
++      // full refresh rather than trying to render it from here.
++      router.refresh();
++    }
++  }, [isComplete, router]);
++
++  return <ProcessingPipeline stages={stages} />;
++}
+diff --git a/components/features/docuements/processing-pipeline.tsx b/components/features/docuements/processing-pipeline.tsx
+new file mode 100644
+index 0000000..7233815
+--- /dev/null
++++ b/components/features/docuements/processing-pipeline.tsx
+@@ -0,0 +1,83 @@
++import { CheckIcon, XIcon } from "lucide-react";
++import { cn } from "cn";
++
++import { Card, CardContent } from "@/components/ui/card";
++import type { PipelineStage } from "@/lib/pipeline";
++
++function StageIcon({ status }: { status: PipelineStage["status"] }) {
++  if (status === "completed") {
++    return (
++      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-chart-2 text-white">
++        <CheckIcon className="size-3.5" />
++      </div>
++    );
++  }
++  if (status === "failed") {
++    return (
++      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-destructive text-white">
++        <XIcon className="size-3.5" />
++      </div>
++    );
++  }
++  if (status === "processing") {
++    return (
++      <div className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-primary">
++        <div className="size-2.5 animate-pulse rounded-full bg-primary" />
++      </div>
++    );
++  }
++  return (
++    <div className="size-6 shrink-0 rounded-full border-2 border-muted-foreground/30" />
++  );
++}
++
++export function ProcessingPipeline({ stages }: { stages: PipelineStage[] }) {
++  return (
++    <Card>
++      <CardContent>
++        <ol className="space-y-0">
++          {stages.map((stage, index) => (
++            <li key={stage.key} className="flex gap-3">
++              <div className="flex flex-col items-center">
++                <StageIcon status={stage.status} />
++                {index < stages.length - 1 && (
++                  <div
++                    className={cn(
++                      "my-1 h-6 w-px",
++                      stage.status === "completed"
++                        ? "bg-chart-2"
++                        : "bg-muted-foreground/20"
++                    )}
++                  />
++                )}
++              </div>
++
++              <div
++                className={cn(
++                  "pb-6 text-sm",
++                  index === stages.length - 1 && "pb-0"
++                )}
++              >
++                <p
++                  className={cn(
++                    "font-medium",
++                    stage.status === "pending" && "text-muted-foreground",
++                    stage.status === "failed" && "text-destructive"
++                  )}
++                >
++                  {stage.label}
++                </p>
++                <p className="text-xs text-muted-foreground">
++                  {stage.status === "completed" && "Done"}
++                  {stage.status === "processing" && "In progress…"}
++                  {stage.status === "failed" && "Processing stopped here"}
++                  {stage.status === "pending" && "Waiting"}
++                </p>
++              </div>
++            </li>
++          ))}
++        </ol>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/risk-category-breakdown.tsx b/components/features/docuements/risk-category-breakdown.tsx
+new file mode 100644
+index 0000000..c27a229
+--- /dev/null
++++ b/components/features/docuements/risk-category-breakdown.tsx
+@@ -0,0 +1,28 @@
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++
++/**
++ * The AI analysis doesn't currently tag risks with a category (legal,
++ * financial, compliance, etc.) — `Risk` only carries a `severity`. Rather
++ * than invent categories, this renders an honest empty state. If
++ * `lib/ai` starts producing a `category` field on `Risk`, this component
++ * is the place to group and chart it.
++ */
++export function RiskCategoryBreakdown() {
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle>Risk Breakdown by Category</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          Legal, financial, compliance, contractual, operational
++        </p>
++      </CardHeader>
++      <CardContent>
++        <p className="py-4 text-sm text-muted-foreground">
++          Category-level risk tagging isn&apos;t produced by the analysis
++          model yet. Once risks are tagged with a category, they&apos;ll be
++          broken out here automatically.
++        </p>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/risk-score-card.tsx b/components/features/docuements/risk-score-card.tsx
+new file mode 100644
+index 0000000..6a3d08a
+--- /dev/null
++++ b/components/features/docuements/risk-score-card.tsx
+@@ -0,0 +1,76 @@
++import { cn } from "cn";
++
++import { Card, CardContent } from "@/components/ui/card";
++import { riskScoreLabel, RISK_TONE_CLASSES } from "@/lib/analysis-view";
++
++const RADIUS = 42;
++const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
++
++export function RiskScoreCard({ score }: { score: number | null }) {
++  if (score === null) {
++    return (
++      <Card>
++        <CardContent className="flex flex-col items-center justify-center gap-1 py-8 text-center">
++          <p className="text-sm font-medium">Risk score pending</p>
++          <p className="text-xs text-muted-foreground">
++            Will appear once analysis completes.
++          </p>
++        </CardContent>
++      </Card>
++    );
++  }
++
++  const { label, tone } = riskScoreLabel(score);
++  const toneClasses = RISK_TONE_CLASSES[tone];
++  const offset = CIRCUMFERENCE * (1 - score / 100);
++
++  return (
++    <Card>
++      <CardContent className="flex flex-row items-center gap-6 py-2">
++        <div className="relative shrink-0">
++          <svg viewBox="0 0 100 100" className="size-28 -rotate-90">
++            <circle
++              cx="50"
++              cy="50"
++              r={RADIUS}
++              fill="none"
++              stroke="var(--color-muted)"
++              strokeWidth={8}
++            />
++            <circle
++              cx="50"
++              cy="50"
++              r={RADIUS}
++              fill="none"
++              strokeWidth={8}
++              strokeLinecap="round"
++              strokeDasharray={CIRCUMFERENCE}
++              strokeDashoffset={offset}
++              className={cn("transition-all duration-700 ease-out", toneClasses.ring)}
++            />
++          </svg>
++          <div className="absolute inset-0 flex flex-col items-center justify-center">
++            <span className="text-2xl font-semibold tabular-nums">{score}</span>
++            <span className="text-[10px] text-muted-foreground">/ 100</span>
++          </div>
++        </div>
++
++        <div>
++          <span
++            className={cn(
++              "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide",
++              toneClasses.bg,
++              toneClasses.text
++            )}
++          >
++            {label}
++          </span>
++          <p className="mt-2 text-sm text-muted-foreground">
++            Overall risk score generated from this document&apos;s AI
++            analysis.
++          </p>
++        </div>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/summary-card.tsx b/components/features/docuements/summary-card.tsx
+new file mode 100644
+index 0000000..78b4378
+--- /dev/null
++++ b/components/features/docuements/summary-card.tsx
+@@ -0,0 +1,23 @@
++import { SparklesIcon } from "lucide-react";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++
++export function SummaryCard({ summary }: { summary: string | null }) {
++  if (!summary) return null;
++
++  return (
++    <Card>
++      <CardHeader>
++        <CardTitle className="flex items-center gap-2">
++          <SparklesIcon className="size-4 text-primary" />
++          AI Summary
++        </CardTitle>
++      </CardHeader>
++      <CardContent>
++        <p className="text-sm leading-relaxed text-muted-foreground">
++          {summary}
++        </p>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/components/features/docuements/upload-zone.tsx b/components/features/docuements/upload-zone.tsx
+index fff5823..69b060c 100644
+--- a/components/features/docuements/upload-zone.tsx
++++ b/components/features/docuements/upload-zone.tsx
+@@ -13,6 +13,8 @@ import {
+ import { Button } from "@/components/ui/button";
+ import { formatBytes } from "@/lib/format";
+ import { validateDocument } from "@/lib/validations/document";
++import { computePipelineStages } from "@/lib/pipeline";
++import { LivePipelineStatus } from "@/components/features/docuements/live-pipeline-status";
+ import {
+   useAnalyzeDocumentMutation,
+   useUploadDocumentMutation,
+@@ -22,10 +24,18 @@ const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
+ 
+ type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
+ 
++const PLACEHOLDER_STAGES = computePipelineStages({
++  status: "PROCESSING",
++  hasChunks: false,
++  indexedAt: null,
++  hasAnalysis: false,
++});
++
+ export function UploadZone() {
+   const [file, setFile] = useState<File | null>(null);
+   const [state, setState] = useState<UploadState>("idle");
+   const [message, setMessage] = useState("");
++  const [analyzingDocumentId, setAnalyzingDocumentId] = useState<string | null>(null);
+   const [isDragging, setIsDragging] = useState(false);
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
+@@ -36,6 +46,7 @@ export function UploadZone() {
+     setFile(null);
+     setState("idle");
+     setMessage("");
++    setAnalyzingDocumentId(null);
+   }, []);
+ 
+   function selectFile(nextFile: File | null) {
+@@ -66,11 +77,13 @@ export function UploadZone() {
+       const documentId = uploadData.document.id;
+ 
+       setState("analyzing");
++      setAnalyzingDocumentId(documentId);
+       setMessage("Document uploaded. Running analysis...");
+ 
+       const analysisData = await analyzeMutation.mutateAsync(documentId);
+ 
+       setState("done");
++      setAnalyzingDocumentId(null);
+       setMessage(
+         `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
+           analysisData.document.pageCount === 1 ? "" : "s"
+@@ -78,6 +91,7 @@ export function UploadZone() {
+       );
+     } catch (error) {
+       setState("error");
++      setAnalyzingDocumentId(null);
+       setMessage(
+         error instanceof Error ? error.message : "Something went wrong"
+       );
+@@ -187,6 +201,13 @@ export function UploadZone() {
+           {message}
+         </p>
+       )}
++
++      {state === "analyzing" && analyzingDocumentId && (
++        <LivePipelineStatus
++          documentId={analyzingDocumentId}
++          initialStages={PLACEHOLDER_STAGES}
++        />
++      )}
+     </div>
+   );
+ }
+diff --git a/components/ui/tabs.tsx b/components/ui/tabs.tsx
+new file mode 100644
+index 0000000..f9f8f0c
+--- /dev/null
++++ b/components/ui/tabs.tsx
+@@ -0,0 +1,83 @@
++"use client";
++
++import { createContext, useContext, useState, type ReactNode } from "react";
++import { cn } from "cn";
++
++type TabsContextValue = {
++  value: string;
++  setValue: (value: string) => void;
++};
++
++const TabsContext = createContext<TabsContextValue | null>(null);
++
++function useTabsContext() {
++  const ctx = useContext(TabsContext);
++  if (!ctx) throw new Error("Tabs components must be used within <Tabs>");
++  return ctx;
++}
++
++export function Tabs({
++  defaultValue,
++  className,
++  children,
++}: {
++  defaultValue: string;
++  className?: string;
++  children: ReactNode;
++}) {
++  const [value, setValue] = useState(defaultValue);
++  return (
++    <TabsContext.Provider value={{ value, setValue }}>
++      <div className={className}>{children}</div>
++    </TabsContext.Provider>
++  );
++}
++
++export function TabsList({ className, children }: { className?: string; children: ReactNode }) {
++  return (
++    <div
++      role="tablist"
++      className={cn(
++        "inline-flex items-center gap-1 rounded-lg bg-muted p-1",
++        className
++      )}
++    >
++      {children}
++    </div>
++  );
++}
++
++export function TabsTrigger({ value, children }: { value: string; children: ReactNode }) {
++  const ctx = useTabsContext();
++  const active = ctx.value === value;
++  return (
++    <button
++      type="button"
++      role="tab"
++      aria-selected={active}
++      onClick={() => ctx.setValue(value)}
++      className={cn(
++        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
++        active
++          ? "bg-background text-foreground shadow-sm"
++          : "text-muted-foreground hover:text-foreground"
++      )}
++    >
++      {children}
++    </button>
++  );
++}
++
++export function TabsContent({
++  value,
++  className,
++  children,
++}: {
++  value: string;
++  className?: string;
++  children: ReactNode;
++}) {
++  const ctx = useTabsContext();
++  if (ctx.value !== value) return null;
++  return <div className={className}>{children}</div>;
++}
+diff --git a/lib/analysis-view.ts b/lib/analysis-view.ts
+new file mode 100644
+index 0000000..dc7245a
+--- /dev/null
++++ b/lib/analysis-view.ts
+@@ -0,0 +1,96 @@
++import type {
++  ActionItem,
++  Entity,
++  ImportantDate,
++  ImportantNumber,
++  KeyFinding,
++  Risk,
++} from "@/types/analysis";
++
++/**
++ * `DocumentAnalysis`'s JSON columns are validated against
++ * `documentAnalysisResultSchema` before they're ever written (see
++ * `lib/validations/analysis.ts`), so a persisted row's shape can be
++ * trusted here. These helpers just guard against `null`/legacy rows.
++ */
++function asArray<T>(value: unknown): T[] {
++  return Array.isArray(value) ? (value as T[]) : [];
++}
++
++export function parseKeyFindings(value: unknown): KeyFinding[] {
++  return asArray<KeyFinding>(value);
++}
++
++export function parseRisks(value: unknown): Risk[] {
++  return asArray<Risk>(value);
++}
++
++export function parseEntities(value: unknown): Entity[] {
++  return asArray<Entity>(value);
++}
++
++export function parseActionItems(value: unknown): ActionItem[] {
++  return asArray<ActionItem>(value);
++}
++
++export function parseImportantDates(value: unknown): ImportantDate[] {
++  return asArray<ImportantDate>(value);
++}
++
++export function parseImportantNumbers(value: unknown): ImportantNumber[] {
++  return asArray<ImportantNumber>(value);
++}
++
++export type Severity = "low" | "medium" | "high";
++
++const SEVERITY_RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 };
++
++function severityOf(item: { severity?: Severity } | { importance?: Severity }): Severity {
++  if ("severity" in item && item.severity) return item.severity;
++  if ("importance" in item && item.importance) return item.importance;
++  return "low";
++}
++
++export function sortBySeverity<T extends { severity?: Severity } | { importance?: Severity }>(
++  items: T[]
++): T[] {
++  return [...items].sort(
++    (a, b) => SEVERITY_RANK[severityOf(a)] - SEVERITY_RANK[severityOf(b)]
++  );
++}
++
++export function riskScoreLabel(score: number): {
++  label: string;
++  tone: "low" | "medium" | "high" | "critical";
++} {
++  if (score >= 85) return { label: "CRITICAL RISK", tone: "critical" };
++  if (score >= 67) return { label: "HIGH RISK", tone: "high" };
++  if (score >= 34) return { label: "MEDIUM RISK", tone: "medium" };
++  return { label: "LOW RISK", tone: "low" };
++}
++
++export const RISK_TONE_CLASSES: Record<
++  "low" | "medium" | "high" | "critical",
++  { text: string; bg: string; ring: string }
++> = {
++  low: {
++    text: "text-chart-2",
++    bg: "bg-chart-2/10",
++    ring: "stroke-chart-2",
++  },
++  medium: {
++    text: "text-chart-4",
++    bg: "bg-chart-4/10",
++    ring: "stroke-chart-4",
++  },
++  high: {
++    text: "text-chart-5",
++    bg: "bg-chart-5/10",
++    ring: "stroke-chart-5",
++  },
++  critical: {
++    text: "text-destructive",
++    bg: "bg-destructive/10",
++    ring: "stroke-destructive",
++  },
++};
+diff --git a/lib/chat-suggestions.ts b/lib/chat-suggestions.ts
+new file mode 100644
+index 0000000..70e2186
+--- /dev/null
++++ b/lib/chat-suggestions.ts
+@@ -0,0 +1,47 @@
++import type { Entity, KeyFinding, Risk } from "@/types/analysis";
++
++const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
++
++/**
++ * Builds suggested prompts from what the analysis actually found for
++ * *this* document, rather than a generic fixed list that assumes every
++ * document is a contract. Nothing here names a clause type or party
++ * obligation the document hasn't shown evidence of.
++ */
++export function buildSuggestedQuestions({
++  hasSummary,
++  risks,
++  keyFindings,
++  entities,
++}: {
++  hasSummary: boolean;
++  risks: Risk[];
++  keyFindings: KeyFinding[];
++  entities: Entity[];
++}): string[] {
++  const suggestions: string[] = [];
++
++  if (hasSummary) {
++    suggestions.push("Summarize this document");
++  }
++
++  if (risks.length > 0) {
++    suggestions.push("What are the major risks?");
++
++    const topRisk = [...risks].sort(
++      (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]
++    )[0];
++    suggestions.push(`What does "${topRisk.title}" mean for me?`);
++  }
++
++  if (keyFindings.length > 0) {
++    suggestions.push(`Tell me more about "${keyFindings[0].title}"`);
++  }
++
++  const organization = entities.find((e) => e.type === "organization");
++  if (organization) {
++    suggestions.push(`What is ${organization.name}'s role in this document?`);
++  }
++
++  return Array.from(new Set(suggestions)).slice(0, 4);
++}
+diff --git a/lib/mime-labels.ts b/lib/mime-labels.ts
+new file mode 100644
+index 0000000..2057b40
+--- /dev/null
++++ b/lib/mime-labels.ts
+@@ -0,0 +1,12 @@
++const MIME_LABELS: Record<string, string> = {
++  "application/pdf": "PDF",
++  "image/png": "PNG",
++  "image/jpeg": "JPEG",
++  "image/tiff": "TIFF",
++};
++
++export function labelForMimeType(mimeType: string): string {
++  return (
++    MIME_LABELS[mimeType] ?? mimeType.split("/")[1]?.toUpperCase() ?? mimeType
++  );
++}
+diff --git a/lib/pipeline.ts b/lib/pipeline.ts
+new file mode 100644
+index 0000000..d4f37b1
+--- /dev/null
++++ b/lib/pipeline.ts
+@@ -0,0 +1,74 @@
++import type { DocumentStatus } from "@/types/document";
++
++export type PipelineStageStatus = "pending" | "processing" | "completed" | "failed";
++
++export type PipelineStage = {
++  key: string;
++  label: string;
++  status: PipelineStageStatus;
++};
++
++/**
++ * Every stage here is backed by a real, persisted signal — never a timer
++ * or a guess:
++ *  - "Uploaded" — the Document row exists (the file is already in Blob
++ *    Storage by the time the row is created; see the upload route).
++ *  - "Text Extraction" — DocumentChunk rows exist for this document
++ *    (written right after Document Intelligence extraction completes).
++ *  - "Search Indexing" — `document.indexedAt` is set, right after the
++ *    chunks are pushed into Azure AI Search.
++ *  - "AI Analysis" — a DocumentAnalysis row exists. The AI call produces
++ *    the risk score in the same pass as the rest of the analysis, so
++ *    there's no genuinely separate "risk assessment" step to report —
++ *    presenting one wouldn't reflect anything the backend actually does.
++ *  - "Complete" — `status === "ANALYZED"`.
++ *
++ * When `status === "FAILED"`, the first stage without a completion
++ * signal is the one marked failed — that's as precise as we can honestly
++ * be, since the pipeline only records success signals, not failure
++ * locations.
++ */
++export function computePipelineStages(document: {
++  status: DocumentStatus;
++  hasChunks: boolean;
++  indexedAt: Date | null;
++  hasAnalysis: boolean;
++}): PipelineStage[] {
++  const { status, hasChunks, indexedAt, hasAnalysis } = document;
++
++  const signals = [
++    true, // uploaded: always true once the row exists
++    hasChunks,
++    indexedAt !== null,
++    hasAnalysis,
++    status === "ANALYZED",
++  ];
++
++  const labels = [
++    "Uploaded",
++    "Text Extraction",
++    "Search Indexing",
++    "AI Analysis",
++    "Complete",
++  ];
++  const keys = ["upload", "extraction", "indexing", "analysis", "complete"];
++
++  const firstIncompleteIndex = signals.findIndex((done) => !done);
++
++  return labels.map((label, index) => {
++    const done = signals[index];
++    let stageStatus: PipelineStageStatus;
++
++    if (done) {
++      stageStatus = "completed";
++    } else if (status === "FAILED" && index === firstIncompleteIndex) {
++      stageStatus = "failed";
++    } else if (status === "PROCESSING" && index === firstIncompleteIndex) {
++      stageStatus = "processing";
++    } else {
++      stageStatus = "pending";
++    }
++
++    return { key: keys[index], label, status: stageStatus };
++  });
++}
+diff --git a/lib/queries/documents.ts b/lib/queries/documents.ts
+index 6da3106..ad4f364 100644
+--- a/lib/queries/documents.ts
++++ b/lib/queries/documents.ts
+@@ -7,7 +7,10 @@ import {
+   analyzeResponseSchema,
+   chatResponseSchema,
+   documentChunksResponseSchema,
++  documentFileUrlResponseSchema,
+   documentListResponseSchema,
++  documentStatsResponseSchema,
++  pipelineStatusResponseSchema,
+   uploadResponseSchema,
+ } from "@/lib/validations/api-responses";
+ import { chatRequestSchema } from "@/lib/validations/chat";
+@@ -42,6 +45,56 @@ export function useDocumentsQuery() {
+   });
+ }
+ 
++/**
++ * Dashboard summary metrics — real aggregates computed server-side from
++ * the signed-in user's documents (see `/api/documents/stats`).
++ */
++export function useDocumentStatsQuery() {
++  return useQuery({
++    queryKey: [...documentKeys.all, "stats"] as const,
++    queryFn: () => fetchJson("/api/documents/stats", documentStatsResponseSchema),
++    refetchInterval: 15_000,
++  });
++}
++
++/**
++ * Short-lived SAS URL for rendering the original file in the document
++ * viewer. Refetched well before its 10-minute expiry so a long-open tab
++ * doesn't end up with a dead viewer link.
++ */
++export function useDocumentFileUrlQuery(documentId: string, enabled = true) {
++  return useQuery({
++    queryKey: [...documentKeys.detail(documentId), "file-url"] as const,
++    queryFn: () =>
++      fetchJson(
++        `/api/documents/${documentId}/file-url`,
++        documentFileUrlResponseSchema
++      ),
++    enabled,
++    staleTime: 7 * 60 * 1000,
++    refetchInterval: 7 * 60 * 1000,
++  });
++}
++
++/**
++ * Polls the real, persisted pipeline signals (see `lib/pipeline.ts`) so
++ * the processing pipeline UI can update live — during initial upload,
++ * during a retry, or on the detail page — without depending on a full
++ * page refresh.
++ */
++export function useDocumentPipelineStatusQuery(documentId: string, enabled: boolean) {
++  return useQuery({
++    queryKey: [...documentKeys.detail(documentId), "pipeline-status"] as const,
++    queryFn: () =>
++      fetchJson(
++        `/api/documents/${documentId}/pipeline-status`,
++        pipelineStatusResponseSchema
++      ),
++    enabled,
++    refetchInterval: enabled ? 2000 : false,
++  });
++}
++
+ export function useDocumentChunksQuery(documentId: string, enabled = true) {
+   return useQuery({
+     queryKey: documentKeys.chunks(documentId),
+diff --git a/lib/validations/api-responses.ts b/lib/validations/api-responses.ts
+index aec7524..3768c0b 100644
+--- a/lib/validations/api-responses.ts
++++ b/lib/validations/api-responses.ts
+@@ -22,12 +22,43 @@ export const documentSummarySchema = z.object({
+   status: documentStatusSchema,
+   pageCount: z.number().nullable(),
+   createdAt: z.coerce.date().transform((date) => date.toISOString()),
++  riskScore: z.number().nullable(),
++});
++
++export const documentFileUrlResponseSchema = z.object({
++  url: z.string(),
++  mimeType: z.string(),
++  expiresInSeconds: z.number(),
++});
++
++export const pipelineStatusResponseSchema = z.object({
++  status: documentStatusSchema,
++  hasChunks: z.boolean(),
++  indexedAt: z.coerce.date().nullable(),
++  hasAnalysis: z.boolean(),
+ });
+ 
+ export const documentListResponseSchema = z.object({
+   documents: z.array(documentSummarySchema),
+ });
+ 
++export const documentStatsResponseSchema = z.object({
++  totalDocuments: z.number(),
++  analyzedCount: z.number(),
++  highRiskCount: z.number(),
++  avgRiskScore: z.number().nullable(),
++  processedThisMonth: z.number(),
++  riskDistribution: z.object({
++    low: z.number(),
++    medium: z.number(),
++    high: z.number(),
++    critical: z.number(),
++  }),
++  activity: z.array(z.object({ date: z.string(), count: z.number() })),
++  documentTypes: z.array(z.object({ mimeType: z.string(), count: z.number() })),
++  hasRiskData: z.boolean(),
++});
++
+ export const documentChunkSummarySchema = z.object({
+   id: z.string(),
+   chunkIndex: z.number(),
+diff --git a/package.json b/package.json
+index d3badda..d1984c5 100644
+--- a/package.json
++++ b/package.json
+@@ -31,6 +31,7 @@
+     "prisma": "7.10.0",
+     "react": "19.2.8",
+     "react-dom": "19.2.8",
++    "recharts": "^2.15.4",
+     "shadcn": "^4.21.0",
+     "three": "^0.170.0",
+     "tw-animate-css": "^1.4.0",
+@@ -41,9 +42,9 @@
+     "@types/dotenv": "^8.2.3",
+     "@types/node": "^20",
+     "@types/pg": "^8.23.1",
+-    "@types/three": "^0.170.0",
+     "@types/react": "^19",
+     "@types/react-dom": "^19",
++    "@types/three": "^0.170.0",
+     "eslint": "^9",
+     "eslint-config-next": "16.3.5",
+     "tailwindcss": "^4",
+diff --git a/prisma/migrations/20260917120000_add_document_indexed_at/migration.sql b/prisma/migrations/20260917120000_add_document_indexed_at/migration.sql
+new file mode 100644
+index 0000000..86d814c
+--- /dev/null
++++ b/prisma/migrations/20260917120000_add_document_indexed_at/migration.sql
+@@ -0,0 +1,7 @@
++-- Adds a real, observable signal for the "Search Indexing" stage of the
++-- processing pipeline UI. Extraction/chunking already leave a trace
++-- (DocumentChunk rows) and AI analysis leaves a trace (DocumentAnalysis
++-- row), but indexing into Azure AI Search previously left no record in
++-- our own database, so the pipeline UI had no honest way to show it as
++-- a distinct completed step. This column is set once indexing succeeds.
++ALTER TABLE "Document" ADD COLUMN "indexedAt" TIMESTAMP(3);
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 348d7f8..7a76f0f 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -47,6 +47,7 @@ model Document {
+ 
+   pageCount     Int?
+   extractedText String?
++  indexedAt     DateTime?
+ 
+   userId        String?
+   user          User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+diff --git a/types/document.ts b/types/document.ts
+index 345e332..a763fe2 100644
+--- a/types/document.ts
++++ b/types/document.ts
+@@ -12,6 +12,7 @@ export type DocumentSummary = {
+   status: DocumentStatus;
+   pageCount: number | null;
+   createdAt: string;
++  riskScore: number | null;
+ };
+ 
+ export type DocumentChunkSummary = {
