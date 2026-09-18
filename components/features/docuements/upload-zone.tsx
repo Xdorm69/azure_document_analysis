@@ -3,11 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import {
   AlertCircleIcon,
-  CheckCircle2Icon,
   FileIcon,
   LoaderCircleIcon,
   UploadCloudIcon,
-  XIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,14 +13,12 @@ import { formatBytes } from "@/lib/format";
 import { validateDocument } from "@/lib/validations/document";
 import { computePipelineStages } from "@/lib/pipeline";
 import { LivePipelineStatus } from "@/components/features/docuements/live-pipeline-status";
-import {
-  useAnalyzeDocumentMutation,
-  useUploadDocumentMutation,
-} from "@/lib/queries/documents";
+import { useToast } from "@/components/ui/toast";
+import { useUploadDocumentMutation } from "@/lib/queries/documents";
 
 const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
 
-type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
+type SelectState = "idle" | "uploading" | "error";
 
 const PLACEHOLDER_STAGES = computePipelineStages({
   status: "PROCESSING",
@@ -31,22 +27,34 @@ const PLACEHOLDER_STAGES = computePipelineStages({
   hasAnalysis: false,
 });
 
+type InFlightDocument = { id: string; name: string };
+
+/**
+ * Uploading only stores the file and hands it off — analysis runs in the
+ * background on the server (see `app/api/documents/upload/route.ts`), so
+ * this component doesn't block on it. The dropzone is free again as soon
+ * as the upload itself finishes, so multiple documents can be queued
+ * back to back; each shows its own live pipeline here until it
+ * completes, and completion/failure are also announced as a toast (via
+ * `DocumentStatusWatcher`) so you don't have to keep watching this card.
+ */
 export function UploadZone() {
   const [file, setFile] = useState<File | null>(null);
-  const [state, setState] = useState<UploadState>("idle");
+  const [state, setState] = useState<SelectState>("idle");
   const [message, setMessage] = useState("");
-  const [analyzingDocumentId, setAnalyzingDocumentId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [inFlight, setInFlight] = useState<InFlightDocument[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const uploadMutation = useUploadDocumentMutation();
-  const analyzeMutation = useAnalyzeDocumentMutation();
+  const notify = useToast();
 
   const reset = useCallback(() => {
     setFile(null);
     setState("idle");
     setMessage("");
-    setAnalyzingDocumentId(null);
+    setUploadProgress(0);
   }, []);
 
   function selectFile(nextFile: File | null) {
@@ -70,28 +78,29 @@ export function UploadZone() {
     if (!file) return;
 
     setState("uploading");
-    setMessage("Uploading document...");
+    setMessage("");
+    setUploadProgress(0);
 
     try {
-      const uploadData = await uploadMutation.mutateAsync(file);
-      const documentId = uploadData.document.id;
+      const uploadData = await uploadMutation.mutateAsync({
+        file,
+        onProgress: setUploadProgress,
+      });
 
-      setState("analyzing");
-      setAnalyzingDocumentId(documentId);
-      setMessage("Document uploaded. Running analysis...");
-
-      const analysisData = await analyzeMutation.mutateAsync(documentId);
-
-      setState("done");
-      setAnalyzingDocumentId(null);
-      setMessage(
-        `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
-          analysisData.document.pageCount === 1 ? "" : "s"
-        } processed.`
-      );
+      // Analysis is already queued server-side by the time this
+      // resolves — free the dropzone immediately instead of waiting.
+      setInFlight((current) => [
+        ...current,
+        { id: uploadData.document.id, name: uploadData.document.name },
+      ]);
+      notify({
+        title: "Queued for analysis",
+        description: uploadData.document.name,
+        variant: "info",
+      });
+      reset();
     } catch (error) {
       setState("error");
-      setAnalyzingDocumentId(null);
       setMessage(
         error instanceof Error ? error.message : "Something went wrong"
       );
@@ -159,58 +168,65 @@ export function UploadZone() {
               Drop a document here or click to browse
             </p>
             <p className="text-xs text-muted-foreground">
-              PDF, PNG, or JPEG — up to 20MB
+              PDF, PNG, or JPEG — up to 20MB. You can keep uploading while
+              earlier documents are still being analyzed.
             </p>
           </>
         )}
       </div>
 
       <div className="flex items-center gap-2">
-        <Button
-          onClick={handleUpload}
-          disabled={!file || isBusy || state === "done" || state === "error"}
-        >
+        <Button onClick={handleUpload} disabled={!file || isBusy}>
           {isBusy && <LoaderCircleIcon className="animate-spin" />}
-          {state === "uploading"
-            ? "Uploading..."
-            : state === "analyzing"
-              ? "Analyzing..."
-              : "Upload & Analyze"}
+          {isBusy ? "Uploading..." : "Upload"}
         </Button>
 
         {file && !isBusy && (
-          <Button variant="ghost" size="icon" onClick={reset}>
-            <XIcon />
-            <span className="sr-only">Clear selection</span>
-          </Button>
-        )}
-
-        {(state === "done" || state === "error") && (
-          <Button variant="outline" onClick={reset}>
-            Upload another
+          <Button variant="ghost" size="sm" onClick={reset}>
+            Clear
           </Button>
         )}
       </div>
 
-      {message && (
-        <p
-          className={`flex items-center gap-1.5 text-sm ${
-            state === "error" ? "text-destructive" : "text-muted-foreground"
-          }`}
+      {state === "uploading" && (
+        <div
+          className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-valuenow={uploadProgress}
+          aria-valuemin={0}
+          aria-valuemax={100}
         >
-          {state === "error" && <AlertCircleIcon className="size-4 shrink-0" />}
-          {state === "done" && (
-            <CheckCircle2Icon className="size-4 shrink-0 text-primary" />
-          )}
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+            style={{ width: `${uploadProgress}%` }}
+          />
+        </div>
+      )}
+
+      {state === "error" && message && (
+        <p className="flex items-center gap-1.5 text-sm text-destructive">
+          <AlertCircleIcon className="size-4 shrink-0" />
           {message}
         </p>
       )}
 
-      {state === "analyzing" && analyzingDocumentId && (
-        <LivePipelineStatus
-          documentId={analyzingDocumentId}
-          initialStages={PLACEHOLDER_STAGES}
-        />
+      {inFlight.length > 0 && (
+        <div className="space-y-3 border-t border-border pt-4">
+          <p className="text-xs font-medium text-muted-foreground">
+            Processing ({inFlight.length})
+          </p>
+          {inFlight.map((doc) => (
+            <div key={doc.id} className="space-y-2">
+              <p className="truncate text-sm font-medium">{doc.name}</p>
+              <LivePipelineStatus
+                documentId={doc.id}
+                initialStages={PLACEHOLDER_STAGES}
+                onComplete={() => removeInFlight(doc.id)}
+                onFailed={() => removeInFlight(doc.id)}
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
