@@ -3,6 +3,8 @@
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { ToastProvider } from "@/components/ui/toast";
+
 export function Providers({ children }: { children: ReactNode }) {
   // Created inside state so each browser session gets its own client
   // (avoids sharing cached data across users on the server during SSR).
@@ -21,7 +23,7 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      <ToastProvider>{children}</ToastProvider>
     </QueryClientProvider>
   );
 }

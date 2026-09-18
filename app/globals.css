@@ -127,3 +127,31 @@
     @apply font-sans;
   }
 }
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes viewer-jump-highlight {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-primary);
+  }
+  100% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-primary) 0%, transparent);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out backwards;
+}
+
+.animate-viewer-jump {
+  animation: viewer-jump-highlight 0.6s ease-out;
+}

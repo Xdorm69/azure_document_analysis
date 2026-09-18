@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-
 import { ApiError, fetchJson } from "@/lib/api-client";
 import {
   analyzeResponseSchema,
@@ -44,6 +43,7 @@ export function useDocumentsQuery() {
     },
   });
 }
+
 
 /**
  * Dashboard summary metrics — real aggregates computed server-side from
@@ -108,32 +108,78 @@ export function useDocumentChunksQuery(documentId: string, enabled = true) {
   });
 }
 
-async function uploadDocumentRequest(file: File) {
+function extractErrorMessage(data: unknown, fallback: string): string {
+  if (
+    data &&
+    typeof data === "object" &&
+    "error" in data &&
+    typeof (data as { error?: unknown }).error === "string"
+  ) {
+    return (data as { error: string }).error;
+  }
+  return fallback;
+}
+
+async function uploadDocumentRequest(
+  file: File,
+  onProgress?: (percent: number) => void
+) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch("/api/documents/upload", {
-    method: "POST",
-    body: formData,
-  });
+  // Plain `fetch` doesn't expose upload progress, so this one request
+  // uses XHR instead — purely for the real progress bar in the upload
+  // zone, not a change to how anything is validated or stored.
+  return new Promise<ReturnType<typeof uploadResponseSchema.parse>>(
+    (resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/documents/upload");
 
-  const data = await response.json().catch(() => null);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
 
-  if (!response.ok) {
-    throw new ApiError(
-      (data && typeof data.error === "string" && data.error) || "Upload failed",
-      response.status
-    );
-  }
+      xhr.onload = () => {
+        let data: unknown = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          // leave data as null; handled below
+        }
 
-  return uploadResponseSchema.parse(data);
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(
+            new ApiError(extractErrorMessage(data, "Upload failed"), xhr.status)
+          );
+          return;
+        }
+
+        try {
+          resolve(uploadResponseSchema.parse(data));
+        } catch {
+          reject(new ApiError("Received an unexpected response", xhr.status));
+        }
+      };
+
+      xhr.onerror = () => reject(new ApiError("Upload failed", 0));
+      xhr.send(formData);
+    }
+  );
 }
 
 export function useUploadDocumentMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: uploadDocumentRequest,
+    mutationFn: ({
+      file,
+      onProgress,
+    }: {
+      file: File;
+      onProgress?: (percent: number) => void;
+    }) => uploadDocumentRequest(file, onProgress),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: documentKeys.list() });
     },

@@ -1,33 +1,31 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-
-import { generateBlobSasUrl } from "@/lib/azure/blob";
-
-import {
-  analyzeDocument,
-  getAnalysisResult,
-} from "@/lib/azure/analyze-document";
-
-import { normalizeDocument } from "@/lib/azure/normalize-document";
-
-import { storeDocumentChunks } from "@/lib/ai/store-chunks";
-
-import { indexDocumentChunks } from "@/lib/ai/index-chunks";
-
-import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
-
-import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
-
-import { storeAnalysis } from "@/lib/ai/store-analysis";
 import { requireOnboardedUser } from "@/lib/auth/current-user";
 import { documentIdParamSchema } from "@/lib/validations/document";
+import { generateBlobSasUrl } from "@/lib/azure/blob";
+import { analyzeDocument, getAnalysisResult } from "@/lib/azure/analyze-document";
+import { normalizeDocument } from "@/lib/azure/normalize-document";
+import { storeDocumentChunks } from "@/lib/ai/store-chunks";
+import { indexDocumentChunks } from "@/lib/ai/index-chunks";
+import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
+import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
+import { storeAnalysis } from "@/lib/ai/store-analysis";
 
+// Analysis (Document Intelligence + AI calls) can run for a while; give
+// this route enough headroom on serverless rather than relying on the
+// platform default. Match this to whatever your hosting plan allows.
+export const maxDuration = 300;
+
+/**
+ * Manually (re-)runs analysis for a document — used by the "Retry
+ * analysis" button on a failed document. Kept synchronous (unlike the
+ * automatic trigger fired right after upload) so the retry button can
+ * show a definitive success/failure result immediately.
+ */
 export async function POST(
   request: Request,
-  context: {
-    params: Promise<{ id: string }>;
-  },
+  context: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireOnboardedUser();
   if (!auth.ok) return auth.response;

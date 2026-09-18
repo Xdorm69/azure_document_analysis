@@ -1,22 +1,168 @@
 diff --git a/app/api/documents/[id]/analyze/route.ts b/app/api/documents/[id]/analyze/route.ts
-index 21251f8..c9f7eda 100644
+index 21251f8..dad278e 100644
 --- a/app/api/documents/[id]/analyze/route.ts
 +++ b/app/api/documents/[id]/analyze/route.ts
-@@ -82,6 +82,14 @@ export async function POST(
+@@ -1,33 +1,24 @@
+ import { NextResponse } from "next/server";
  
-     const searchStats = await indexDocumentChunks(document.id);
+ import { prisma } from "@/lib/prisma";
+-
+-import { generateBlobSasUrl } from "@/lib/azure/blob";
+-
+-import {
+-  analyzeDocument,
+-  getAnalysisResult,
+-} from "@/lib/azure/analyze-document";
+-
+-import { normalizeDocument } from "@/lib/azure/normalize-document";
+-
+-import { storeDocumentChunks } from "@/lib/ai/store-chunks";
+-
+-import { indexDocumentChunks } from "@/lib/ai/index-chunks";
+-
+-import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
+-
+-import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
+-
+-import { storeAnalysis } from "@/lib/ai/store-analysis";
++import { processDocumentAnalysis } from "@/lib/document-processing";
+ import { requireOnboardedUser } from "@/lib/auth/current-user";
+ import { documentIdParamSchema } from "@/lib/validations/document";
  
-+    // Recorded the moment indexing succeeds (not batched with the final
-+    // update below) so the processing pipeline UI can show "indexed" as
-+    // its own real, observable step while analysis is still running.
-+    await prisma.document.update({
-+      where: { id },
-+      data: { indexedAt: new Date() },
-+    });
++// Analysis (Document Intelligence + AI calls) can run for a while; give
++// this route enough headroom on serverless rather than relying on the
++// platform default. Match this to whatever your hosting plan allows.
++export const maxDuration = 300;
 +
-     //ai summarization
-     const analysisContext = await getAnalysisContext(document.id);
++/**
++ * Manually (re-)runs analysis for a document — used by the "Retry
++ * analysis" button on a failed document. Kept synchronous (unlike the
++ * automatic trigger fired right after upload) so the retry button can
++ * show a definitive success/failure result immediately.
++ */
+ export async function POST(
+   request: Request,
+-  context: {
+-    params: Promise<{ id: string }>;
+-  },
++  context: { params: Promise<{ id: string }> }
+ ) {
+   const auth = await requireOnboardedUser();
+   if (!auth.ok) return auth.response;
+@@ -36,99 +27,28 @@ export async function POST(
+   if (!parsedParams.success) {
+     return NextResponse.json(
+       { error: parsedParams.error.issues[0]?.message ?? "Invalid document id" },
+-      { status: 400 },
++      { status: 400 }
+     );
+   }
+   const { id } = parsedParams.data;
  
+-  try {
+-    // Scoped to the signed-in user: another user's document id 404s
+-    // instead of leaking whether it exists.
+-    const document = await prisma.document.findFirst({
+-      where: { id, userId: auth.user.id },
+-    });
+-
+-    if (!document) {
+-      return NextResponse.json(
+-        {
+-          error: "Document not found",
+-        },
+-        { status: 404 },
+-      );
+-    }
+-
+-    await prisma.document.update({
+-      where: { id },
+-      data: {
+-        status: "PROCESSING",
+-      },
+-    });
+-
+-    // 1. Generate temporary URL
+-    const sasUrl = generateBlobSasUrl(document.blobPath);
+-
+-    // 2. Start Azure analysis
+-    const operationLocation = await analyzeDocument(sasUrl);
+-
+-    // 3. Wait for result
+-    const result = await getAnalysisResult(operationLocation);
+-
+-    // 4. Convert Azure response
+-    const parsed = normalizeDocument(result);
++  // Scoped to the signed-in user: another user's document id 404s
++  // instead of leaking whether it exists.
++  const document = await prisma.document.findFirst({
++    where: { id, userId: auth.user.id },
++  });
+ 
+-    // u4. Chunk stats
+-
+-    const chunkStats = await storeDocumentChunks(document.id, parsed);
+-
+-    const searchStats = await indexDocumentChunks(document.id);
+-
+-    //ai summarization
+-    const analysisContext = await getAnalysisContext(document.id);
+-
+-    const aiAnalysis = await analyzeDocumentWithAI(analysisContext);
+-
+-    await storeAnalysis(document.id, aiAnalysis);
+-
+-    // 5. Save result
+-    const updated = await prisma.document.update({
+-      where: { id },
+-      data: {
+-        status: "ANALYZED",
+-        pageCount: parsed.pageCount,
+-        extractedText: parsed.fullText,
+-      },
+-    });
+-
+-    return NextResponse.json({
+-      success: true,
+-
+-      document: {
+-        id: updated.id,
+-        name: updated.name,
+-        pageCount: parsed.pageCount,
+-      },
+-
+-      chunks: chunkStats,
+-
+-      search: searchStats,
++  if (!document) {
++    return NextResponse.json({ error: "Document not found" }, { status: 404 });
++  }
+ 
+-      analysis: aiAnalysis,
+-    });
++  try {
++    const result = await processDocumentAnalysis(id);
++    return NextResponse.json({ success: true, ...result });
+   } catch (error) {
+-    console.error(error);
+-
+-    await prisma.document.update({
+-      where: { id },
+-      data: {
+-        status: "FAILED",
+-      },
+-    });
+-
+     return NextResponse.json(
+-      {
+-        error: error instanceof Error ? error.message : "Analysis failed",
+-      },
+-      { status: 500 },
++      { error: error instanceof Error ? error.message : "Analysis failed" },
++      { status: 500 }
+     );
+   }
+ }
 diff --git a/app/api/documents/[id]/file-url/route.ts b/app/api/documents/[id]/file-url/route.ts
 new file mode 100644
 index 0000000..221429b
@@ -262,6 +408,49 @@ index 0000000..851413b
 +    hasRiskData: riskScores.length > 0,
 +  });
 +}
+diff --git a/app/api/documents/upload/route.ts b/app/api/documents/upload/route.ts
+index c8d2966..311be44 100644
+--- a/app/api/documents/upload/route.ts
++++ b/app/api/documents/upload/route.ts
+@@ -1,10 +1,19 @@
+-import { NextResponse } from "next/server";
++import { NextResponse, after } from "next/server";
+ import crypto from "crypto";
+ 
+ import { prisma } from "@/lib/prisma";
+ import { uploadDocument } from "@/lib/azure/blob";
+ import { validateDocument } from "@/lib/validations/document";
+ import { requireOnboardedUser } from "@/lib/auth/current-user";
++import { processDocumentAnalysis } from "@/lib/document-processing";
++
++// This route returns as soon as the file is stored — analysis runs in
++// `after()` below, past the point the response is sent. On serverless
++// (Vercel), `after()` extends the function's lifetime just for that
++// background work (via `waitUntil`) rather than requiring a separate
++// queue/worker service. maxDuration bounds how long that's allowed to
++// run; match it to your hosting plan's limit.
++export const maxDuration = 300;
+ 
+ export async function POST(request: Request) {
+   const auth = await requireOnboardedUser();
+@@ -47,6 +56,17 @@ export async function POST(request: Request) {
+       },
+     });
+ 
++    // Fire-and-forget: the client gets its response now and can move on
++    // immediately. Progress is visible via `/api/documents/[id]/pipeline-status`
++    // (already polled by `LivePipelineStatus`), and failures land on the
++    // document as `status: "FAILED"`, retryable from the detail page —
++    // same as before, just no longer blocking this request.
++    after(() =>
++      processDocumentAnalysis(document.id).catch((error) => {
++        console.error(`Background analysis failed for ${document.id}:`, error);
++      })
++    );
++
+     return NextResponse.json(
+       {
+         success: true,
 diff --git a/app/dashboard/documents/[id]/page.tsx b/app/dashboard/documents/[id]/page.tsx
 index 29540b2..be94d9b 100644
 --- a/app/dashboard/documents/[id]/page.tsx
@@ -385,6 +574,30 @@ index 29540b2..be94d9b 100644
        )}
      </main>
    );
+diff --git a/app/dashboard/layout.tsx b/app/dashboard/layout.tsx
+index b64cbeb..ebc3fea 100644
+--- a/app/dashboard/layout.tsx
++++ b/app/dashboard/layout.tsx
+@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
+ import type { ReactNode } from "react";
+ 
+ import { prisma } from "@/lib/prisma";
++import { DocumentStatusWatcher } from "@/components/features/docuements/document-status-watcher";
+ 
+ export default async function DashboardLayout({
+   children,
+@@ -23,5 +24,10 @@ export default async function DashboardLayout({
+     redirect("/onboard");
+   }
+ 
+-  return <>{children}</>;
++  return (
++    <>
++      <DocumentStatusWatcher />
++      {children}
++    </>
++  );
+ }
 diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
 index 3a6b641..8877c6a 100644
 --- a/app/dashboard/page.tsx
@@ -444,12 +657,72 @@ index 3a6b641..8877c6a 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/app/globals.css b/app/globals.css
+index 030ba74..03bfb20 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -126,4 +126,32 @@
+   html {
+     @apply font-sans;
+   }
++}
++
++@keyframes fade-in-up {
++  from {
++    opacity: 0;
++    transform: translateY(4px);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0);
++  }
++}
++
++@keyframes viewer-jump-highlight {
++  0% {
++    box-shadow: 0 0 0 0 var(--color-primary);
++  }
++  100% {
++    box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-primary) 0%, transparent);
++  }
++}
++
++.animate-fade-in-up {
++  animation: fade-in-up 0.3s ease-out backwards;
++}
++
++.animate-viewer-jump {
++  animation: viewer-jump-highlight 0.6s ease-out;
+ }
+\ No newline at end of file
+diff --git a/app/providers.tsx b/app/providers.tsx
+index 53ef41a..e9f104b 100644
+--- a/app/providers.tsx
++++ b/app/providers.tsx
+@@ -3,6 +3,8 @@
+ import { useState, type ReactNode } from "react";
+ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+ 
++import { ToastProvider } from "@/components/ui/toast";
++
+ export function Providers({ children }: { children: ReactNode }) {
+   // Created inside state so each browser session gets its own client
+   // (avoids sharing cached data across users on the server during SSR).
+@@ -21,7 +23,7 @@ export function Providers({ children }: { children: ReactNode }) {
+ 
+   return (
+     <QueryClientProvider client={queryClient}>
+-      {children}
++      <ToastProvider>{children}</ToastProvider>
+     </QueryClientProvider>
+   );
+ }
 diff --git a/components/features/dashboard/activity-chart.tsx b/components/features/dashboard/activity-chart.tsx
 new file mode 100644
-index 0000000..40c6127
+index 0000000..c7b5258
 --- /dev/null
 +++ b/components/features/dashboard/activity-chart.tsx
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,95 @@
 +"use client";
 +
 +import {
@@ -461,7 +734,7 @@ index 0000000..40c6127
 +  XAxis,
 +} from "recharts";
 +
-+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 +import { useDocumentStatsQuery } from "@/lib/queries/documents";
 +
 +export function ActivityChart() {
@@ -473,9 +746,7 @@ index 0000000..40c6127
 +    <Card>
 +      <CardHeader>
 +        <CardTitle>Document Activity</CardTitle>
-+        <p className="text-xs text-muted-foreground">
-+          Uploads over the last 30 days
-+        </p>
++        <CardDescription>Uploads over the last 30 days</CardDescription>
 +      </CardHeader>
 +      <CardContent className="pt-2">
 +        {isLoading ? (
@@ -592,7 +863,7 @@ index 0000000..e8cf9fd
 +}
 diff --git a/components/features/dashboard/document-types-chart.tsx b/components/features/dashboard/document-types-chart.tsx
 new file mode 100644
-index 0000000..1dd772f
+index 0000000..7404e69
 --- /dev/null
 +++ b/components/features/dashboard/document-types-chart.tsx
 @@ -0,0 +1,65 @@
@@ -600,7 +871,7 @@ index 0000000..1dd772f
 +
 +import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 +
-+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 +import { useDocumentStatsQuery } from "@/lib/queries/documents";
 +
 +import { labelForMimeType } from "@/lib/mime-labels";
@@ -620,7 +891,7 @@ index 0000000..1dd772f
 +    <Card>
 +      <CardHeader>
 +        <CardTitle>Document Types</CardTitle>
-+        <p className="text-xs text-muted-foreground">By file format</p>
++        <CardDescription>By file format</CardDescription>
 +      </CardHeader>
 +      <CardContent className="pt-2">
 +        {isLoading ? (
@@ -663,15 +934,15 @@ index 0000000..1dd772f
 +}
 diff --git a/components/features/dashboard/risk-distribution-chart.tsx b/components/features/dashboard/risk-distribution-chart.tsx
 new file mode 100644
-index 0000000..f3ff16a
+index 0000000..392c468
 --- /dev/null
 +++ b/components/features/dashboard/risk-distribution-chart.tsx
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,89 @@
 +"use client";
 +
 +import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 +
-+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 +import { useDocumentStatsQuery } from "@/lib/queries/documents";
 +
 +const RISK_COLORS: Record<string, string> = {
@@ -697,9 +968,7 @@ index 0000000..f3ff16a
 +    <Card>
 +      <CardHeader>
 +        <CardTitle>Risk Distribution</CardTitle>
-+        <p className="text-xs text-muted-foreground">
-+          Across all analyzed documents
-+        </p>
++        <CardDescription>Across all analyzed documents</CardDescription>
 +      </CardHeader>
 +      <CardContent className="pt-2">
 +        {isLoading ? (
@@ -760,14 +1029,21 @@ index 0000000..f3ff16a
 +}
 diff --git a/components/features/dashboard/stat-card.tsx b/components/features/dashboard/stat-card.tsx
 new file mode 100644
-index 0000000..8185f78
+index 0000000..c8befec
 --- /dev/null
 +++ b/components/features/dashboard/stat-card.tsx
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,52 @@
 +import { cn } from "cn";
 +import type { LucideIcon } from "lucide-react";
 +
 +import { Card, CardContent } from "@/components/ui/card";
++import { useCountUp } from "@/lib/hooks/use-count-up";
++
++function AnimatedValue({ value }: { value: string | number }) {
++  const numeric = typeof value === "number" ? value : null;
++  const animated = useCountUp(numeric ?? 0);
++  return <>{numeric === null ? value : animated}</>;
++}
 +
 +export function StatCard({
 +  label,
@@ -793,7 +1069,7 @@ index 0000000..8185f78
 +        <div className="min-w-0">
 +          <p className="text-sm text-muted-foreground">{label}</p>
 +          <p className="mt-1.5 text-3xl font-semibold tabular-nums tracking-tight">
-+            {value}
++            <AnimatedValue value={value} />
 +          </p>
 +          {hint && (
 +            <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -1265,7 +1541,7 @@ index b278acc..e71581e 100644
          </CardContent>
        </Card>
 diff --git a/components/features/docuements/document-chat.tsx b/components/features/docuements/document-chat.tsx
-index 34504ed..42b0a6f 100644
+index 34504ed..71d9d4b 100644
 --- a/components/features/docuements/document-chat.tsx
 +++ b/components/features/docuements/document-chat.tsx
 @@ -1,8 +1,13 @@
@@ -1426,7 +1702,7 @@ index 34504ed..42b0a6f 100644
 +                    key={suggestion}
 +                    type="button"
 +                    onClick={() => ask(suggestion)}
-+                    className="rounded-full border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
++                    className="rounded-full border border-border px-3 py-1.5 text-xs transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
 +                  >
 +                    {suggestion}
 +                  </button>
@@ -1498,7 +1774,7 @@ index 34504ed..42b0a6f 100644
 +                      onClick={() => onSelectPage?.(citation.pageNumber)}
 +                      disabled={!onSelectPage}
 +                      className={cn(
-+                        "rounded-md border border-border px-2 py-0.5 text-xs",
++                        "rounded-md border border-border px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
 +                        onSelectPage && "hover:border-primary hover:text-primary"
 +                      )}
                      >
@@ -1545,7 +1821,7 @@ index 34504ed..42b0a6f 100644
 +            onKeyDown={handleKeyDown}
 +            placeholder="Ask anything about this document… (Enter to send, Shift+Enter for a new line)"
 +            rows={1}
-+            className="max-h-32 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/50"
++            className="max-h-32 flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
            />
  
 -          <button
@@ -1569,10 +1845,10 @@ index 34504ed..42b0a6f 100644
  }
 diff --git a/components/features/docuements/document-library-toolbar.tsx b/components/features/docuements/document-library-toolbar.tsx
 new file mode 100644
-index 0000000..0781a71
+index 0000000..e756357
 --- /dev/null
 +++ b/components/features/docuements/document-library-toolbar.tsx
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,94 @@
 +"use client";
 +
 +import { SearchIcon } from "lucide-react";
@@ -1614,18 +1890,20 @@ index 0000000..0781a71
 +          value={search}
 +          onChange={(event) => onSearchChange(event.target.value)}
 +          placeholder="Search documents…"
-+          className="w-full rounded-lg border border-border bg-background py-2 pr-3 pl-9 text-sm outline-none focus:ring-2 focus:ring-ring/50"
++          aria-label="Search documents"
++          className="w-full rounded-lg border border-border bg-background py-2 pr-3 pl-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 +        />
 +      </div>
 +
-+      <div className="flex flex-wrap gap-1.5">
++      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter documents">
 +        {FILTERS.map((f) => (
 +          <button
 +            key={f.value}
 +            type="button"
++            aria-pressed={filter === f.value}
 +            onClick={() => onFilterChange(f.value)}
 +            className={cn(
-+              "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
++              "rounded-full px-3 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
 +              filter === f.value
 +                ? "bg-foreground text-background"
 +                : "bg-muted text-muted-foreground hover:text-foreground"
@@ -1666,7 +1944,7 @@ index 0000000..0781a71
 +  });
 +}
 diff --git a/components/features/docuements/document-list.tsx b/components/features/docuements/document-list.tsx
-index a98af1b..1e882b9 100644
+index a98af1b..c5a123b 100644
 --- a/components/features/docuements/document-list.tsx
 +++ b/components/features/docuements/document-list.tsx
 @@ -1,4 +1,4 @@
@@ -1691,6 +1969,15 @@ index a98af1b..1e882b9 100644
  }) {
    if (isLoading) {
      return (
+@@ -18,7 +23,7 @@ export function DocumentList({
+         {[0, 1, 2].map((i) => (
+           <div
+             key={i}
+-            className="h-[72px] animate-pulse rounded-xl bg-muted"
++            className="h-[88px] animate-pulse rounded-xl bg-muted"
+           />
+         ))}
+       </div>
 @@ -33,6 +38,18 @@ export function DocumentList({
      );
    }
@@ -1776,15 +2063,83 @@ index 0000000..b2eb525
 +    </div>
 +  );
 +}
-diff --git a/components/features/docuements/document-viewer.tsx b/components/features/docuements/document-viewer.tsx
+diff --git a/components/features/docuements/document-status-watcher.tsx b/components/features/docuements/document-status-watcher.tsx
 new file mode 100644
-index 0000000..b700d8e
+index 0000000..08e3278
 --- /dev/null
-+++ b/components/features/docuements/document-viewer.tsx
-@@ -0,0 +1,86 @@
++++ b/components/features/docuements/document-status-watcher.tsx
+@@ -0,0 +1,60 @@
 +"use client";
 +
++import { useEffect, useRef } from "react";
++
++import { useDocumentsQuery } from "@/lib/queries/documents";
++import { useToast } from "@/components/ui/toast";
++
++const ACTIVE = new Set(["UPLOADED", "PROCESSING"]);
++
++/**
++ * Mounted once in the dashboard layout (so it survives navigation
++ * between the document library and a document's detail page) — not per
++ * upload. It rides the same `useDocumentsQuery` polling every other part
++ * of the dashboard already uses, diffs statuses between polls, and
++ * raises a toast the moment a document leaves an active state. This is
++ * the "you get notified when it finishes" behavior without a
++ * notification service — the browser tab just has to still be open.
++ */
++export function DocumentStatusWatcher() {
++  const { data: documents } = useDocumentsQuery();
++  const notify = useToast();
++  const previousStatuses = useRef<Map<string, string>>(new Map());
++  const hasSeenFirstLoad = useRef(false);
++
++  useEffect(() => {
++    if (!documents) return;
++
++    // Don't fire notifications for the very first snapshot on page
++    // load — only for transitions observed while this tab is open.
++    if (!hasSeenFirstLoad.current) {
++      hasSeenFirstLoad.current = true;
++      previousStatuses.current = new Map(documents.map((d) => [d.id, d.status]));
++      return;
++    }
++
++    for (const doc of documents) {
++      const previousStatus = previousStatuses.current.get(doc.id);
++
++      if (previousStatus && ACTIVE.has(previousStatus) && doc.status !== previousStatus) {
++        if (doc.status === "ANALYZED") {
++          notify({
++            title: "Analysis complete",
++            description: doc.name,
++            variant: "success",
++          });
++        } else if (doc.status === "FAILED") {
++          notify({
++            title: "Analysis failed",
++            description: doc.name,
++            variant: "error",
++          });
++        }
++      }
++
++      previousStatuses.current.set(doc.id, doc.status);
++    }
++  }, [documents, notify]);
++
++  return null;
++}
+diff --git a/components/features/docuements/document-viewer.tsx b/components/features/docuements/document-viewer.tsx
+new file mode 100644
+index 0000000..3ba9bc8
+--- /dev/null
++++ b/components/features/docuements/document-viewer.tsx
+@@ -0,0 +1,123 @@
++"use client";
++
++import { useEffect, useRef } from "react";
 +import { AlertCircleIcon, RefreshCwIcon } from "lucide-react";
++import { cn } from "cn";
 +
 +import { Button } from "@/components/ui/button";
 +import { useDocumentFileUrlQuery } from "@/lib/queries/documents";
@@ -1846,12 +2201,45 @@ index 0000000..b700d8e
 +      ? `${data.url}#page=${activePage}`
 +      : data.url;
 +
++  return (
++    <ViewerFrame isImage={isImage} src={src} activePage={activePage} altUrl={data.url} />
++  );
++}
++
++function ViewerFrame({
++  isImage,
++  src,
++  activePage,
++  altUrl,
++}: {
++  isImage: boolean;
++  src: string;
++  activePage: number | null;
++  altUrl: string;
++}) {
++  const wrapperRef = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    if (activePage === null) return;
++    const node = wrapperRef.current;
++    if (!node) return;
++
++    node.classList.remove("animate-viewer-jump");
++    // Force reflow so the animation can be re-triggered on repeated
++    // clicks to the same page reference.
++    void node.offsetWidth;
++    node.classList.add("animate-viewer-jump");
++  }, [activePage]);
++
 +  if (isImage) {
 +    return (
-+      <div className="flex h-full w-full items-center justify-center overflow-auto rounded-xl border border-border bg-muted/30 p-4">
++      <div
++        ref={wrapperRef}
++        className="flex h-full w-full items-center justify-center overflow-auto rounded-xl border border-border bg-muted/30 p-4"
++      >
 +        {/* eslint-disable-next-line @next/next/no-img-element -- external SAS-signed blob URL, not a local/static asset */}
 +        <img
-+          src={data.url}
++          src={altUrl}
 +          alt="Document preview"
 +          className="max-h-full max-w-full rounded-md object-contain shadow-sm"
 +        />
@@ -1860,12 +2248,14 @@ index 0000000..b700d8e
 +  }
 +
 +  return (
-+    <iframe
-+      key={src}
-+      src={src}
-+      title="Document preview"
-+      className="h-full w-full rounded-xl border border-border bg-muted/30"
-+    />
++    <div ref={wrapperRef} className="h-full w-full rounded-xl">
++      <iframe
++        key={src}
++        src={src}
++        title="Document preview"
++        className={cn("h-full w-full rounded-xl border border-border bg-muted/30")}
++      />
++    </div>
 +  );
 +}
 diff --git a/components/features/docuements/document-workspace-split.tsx b/components/features/docuements/document-workspace-split.tsx
@@ -2036,14 +2426,14 @@ index 7c673fc..6ee2bcc 100644
      </div>
 diff --git a/components/features/docuements/findings-list.tsx b/components/features/docuements/findings-list.tsx
 new file mode 100644
-index 0000000..220f6e5
+index 0000000..0309985
 --- /dev/null
 +++ b/components/features/docuements/findings-list.tsx
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,125 @@
 +import { cn } from "cn";
 +import { ChevronDownIcon } from "lucide-react";
 +
-+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 +import type { KeyFinding, Risk } from "@/types/analysis";
 +import { RISK_TONE_CLASSES, sortBySeverity } from "@/lib/analysis-view";
 +
@@ -2106,9 +2496,9 @@ index 0000000..220f6e5
 +    <Card>
 +      <CardHeader>
 +        <CardTitle>Key Findings</CardTitle>
-+        <p className="text-xs text-muted-foreground">
++        <CardDescription>
 +          Findings and flagged risks, ordered by severity
-+        </p>
++        </CardDescription>
 +      </CardHeader>
 +      <CardContent>
 +        {unified.length === 0 ? (
@@ -2118,9 +2508,13 @@ index 0000000..220f6e5
 +        ) : (
 +          <ul className="divide-y divide-border">
 +            {unified.map((item, index) => (
-+              <li key={index}>
++              <li
++                key={index}
++                className="animate-fade-in-up"
++                style={{ animationDelay: `${Math.min(index, 8) * 60}ms` }}
++              >
 +                <details className="group py-3 first:pt-0 last:pb-0">
-+                  <summary className="flex cursor-pointer list-none items-start justify-between gap-3">
++                  <summary className="flex cursor-pointer list-none items-start justify-between gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
 +                    <div className="min-w-0">
 +                      <div className="flex items-center gap-2">
 +                        <SeverityBadge severity={item.severity} />
@@ -2137,7 +2531,7 @@ index 0000000..220f6e5
 +                          }}
 +                          disabled={!onSelectPage}
 +                          className={cn(
-+                            "mt-1 text-xs text-muted-foreground",
++                            "mt-1 rounded-sm text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
 +                            onSelectPage && "underline-offset-2 hover:text-primary hover:underline"
 +                          )}
 +                        >
@@ -2163,10 +2557,10 @@ index 0000000..220f6e5
 +}
 diff --git a/components/features/docuements/live-pipeline-status.tsx b/components/features/docuements/live-pipeline-status.tsx
 new file mode 100644
-index 0000000..4ab3f0a
+index 0000000..26b7870
 --- /dev/null
 +++ b/components/features/docuements/live-pipeline-status.tsx
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,50 @@
 +"use client";
 +
 +import { useEffect } from "react";
@@ -2179,25 +2573,41 @@ index 0000000..4ab3f0a
 +export function LivePipelineStatus({
 +  documentId,
 +  initialStages,
++  onComplete,
++  onFailed,
 +}: {
 +  documentId: string;
 +  initialStages: PipelineStage[];
++  /** Called once, the moment every stage reports "completed". */
++  onComplete?: () => void;
++  /** Called once, the moment any stage reports "failed". */
++  onFailed?: () => void;
 +}) {
 +  const router = useRouter();
 +  const { data } = useDocumentPipelineStatusQuery(documentId, true);
 +
 +  const stages = data ? computePipelineStages(data) : initialStages;
 +  const isComplete = stages.every((stage) => stage.status === "completed");
++  const hasFailed = stages.some((stage) => stage.status === "failed");
 +
 +  useEffect(() => {
 +    if (isComplete) {
++      onComplete?.();
 +      // The document detail page renders a completely different layout
 +      // once analysis finishes (DocumentWorkspaceSplit instead of the
 +      // pipeline card) — that comes from server data, so hand off to a
 +      // full refresh rather than trying to render it from here.
 +      router.refresh();
 +    }
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per completion, not on every callback identity change
 +  }, [isComplete, router]);
++
++  useEffect(() => {
++    if (hasFailed) {
++      onFailed?.();
++    }
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per failure, not on every callback identity change
++  }, [hasFailed]);
 +
 +  return <ProcessingPipeline stages={stages} />;
 +}
@@ -2292,11 +2702,11 @@ index 0000000..7233815
 +}
 diff --git a/components/features/docuements/risk-category-breakdown.tsx b/components/features/docuements/risk-category-breakdown.tsx
 new file mode 100644
-index 0000000..c27a229
+index 0000000..6fa0917
 --- /dev/null
 +++ b/components/features/docuements/risk-category-breakdown.tsx
 @@ -0,0 +1,28 @@
-+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 +
 +/**
 + * The AI analysis doesn't currently tag risks with a category (legal,
@@ -2310,9 +2720,9 @@ index 0000000..c27a229
 +    <Card>
 +      <CardHeader>
 +        <CardTitle>Risk Breakdown by Category</CardTitle>
-+        <p className="text-xs text-muted-foreground">
++        <CardDescription>
 +          Legal, financial, compliance, contractual, operational
-+        </p>
++        </CardDescription>
 +      </CardHeader>
 +      <CardContent>
 +        <p className="py-4 text-sm text-muted-foreground">
@@ -2326,19 +2736,22 @@ index 0000000..c27a229
 +}
 diff --git a/components/features/docuements/risk-score-card.tsx b/components/features/docuements/risk-score-card.tsx
 new file mode 100644
-index 0000000..6a3d08a
+index 0000000..577b3df
 --- /dev/null
 +++ b/components/features/docuements/risk-score-card.tsx
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,79 @@
 +import { cn } from "cn";
 +
 +import { Card, CardContent } from "@/components/ui/card";
 +import { riskScoreLabel, RISK_TONE_CLASSES } from "@/lib/analysis-view";
++import { useCountUp } from "@/lib/hooks/use-count-up";
 +
 +const RADIUS = 42;
 +const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 +
 +export function RiskScoreCard({ score }: { score: number | null }) {
++  const animatedScore = useCountUp(score ?? 0, 800);
++
 +  if (score === null) {
 +    return (
 +      <Card>
@@ -2382,7 +2795,7 @@ index 0000000..6a3d08a
 +            />
 +          </svg>
 +          <div className="absolute inset-0 flex flex-col items-center justify-center">
-+            <span className="text-2xl font-semibold tabular-nums">{score}</span>
++            <span className="text-2xl font-semibold tabular-nums">{animatedScore}</span>
 +            <span className="text-[10px] text-muted-foreground">/ 100</span>
 +          </div>
 +        </div>
@@ -2436,22 +2849,38 @@ index 0000000..78b4378
 +  );
 +}
 diff --git a/components/features/docuements/upload-zone.tsx b/components/features/docuements/upload-zone.tsx
-index fff5823..69b060c 100644
+index fff5823..fe800eb 100644
 --- a/components/features/docuements/upload-zone.tsx
 +++ b/components/features/docuements/upload-zone.tsx
-@@ -13,6 +13,8 @@ import {
+@@ -3,39 +3,58 @@
+ import { useCallback, useRef, useState } from "react";
+ import {
+   AlertCircleIcon,
+-  CheckCircle2Icon,
+   FileIcon,
+   LoaderCircleIcon,
+   UploadCloudIcon,
+-  XIcon,
+ } from "lucide-react";
+ 
  import { Button } from "@/components/ui/button";
  import { formatBytes } from "@/lib/format";
  import { validateDocument } from "@/lib/validations/document";
+-import {
+-  useAnalyzeDocumentMutation,
+-  useUploadDocumentMutation,
+-} from "@/lib/queries/documents";
 +import { computePipelineStages } from "@/lib/pipeline";
 +import { LivePipelineStatus } from "@/components/features/docuements/live-pipeline-status";
- import {
-   useAnalyzeDocumentMutation,
-   useUploadDocumentMutation,
-@@ -22,10 +24,18 @@ const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
++import { useToast } from "@/components/ui/toast";
++import { useUploadDocumentMutation } from "@/lib/queries/documents";
  
- type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
+ const ACCEPTED_TYPES = ".pdf,.png,.jpg,.jpeg";
  
+-type UploadState = "idle" | "uploading" | "analyzing" | "done" | "error";
+-
++type SelectState = "idle" | "uploading" | "error";
++
 +const PLACEHOLDER_STAGES = computePipelineStages({
 +  status: "PROCESSING",
 +  hasChunks: false,
@@ -2459,61 +2888,193 @@ index fff5823..69b060c 100644
 +  hasAnalysis: false,
 +});
 +
++type InFlightDocument = { id: string; name: string };
++
++/**
++ * Uploading only stores the file and hands it off — analysis runs in the
++ * background on the server (see `app/api/documents/upload/route.ts`), so
++ * this component doesn't block on it. The dropzone is free again as soon
++ * as the upload itself finishes, so multiple documents can be queued
++ * back to back; each shows its own live pipeline here until it
++ * completes, and completion/failure are also announced as a toast (via
++ * `DocumentStatusWatcher`) so you don't have to keep watching this card.
++ */
  export function UploadZone() {
    const [file, setFile] = useState<File | null>(null);
-   const [state, setState] = useState<UploadState>("idle");
+-  const [state, setState] = useState<UploadState>("idle");
++  const [state, setState] = useState<SelectState>("idle");
    const [message, setMessage] = useState("");
-+  const [analyzingDocumentId, setAnalyzingDocumentId] = useState<string | null>(null);
++  const [uploadProgress, setUploadProgress] = useState(0);
++  const [inFlight, setInFlight] = useState<InFlightDocument[]>([]);
    const [isDragging, setIsDragging] = useState(false);
    const inputRef = useRef<HTMLInputElement>(null);
  
-@@ -36,6 +46,7 @@ export function UploadZone() {
+   const uploadMutation = useUploadDocumentMutation();
+-  const analyzeMutation = useAnalyzeDocumentMutation();
++  const notify = useToast();
+ 
+   const reset = useCallback(() => {
      setFile(null);
      setState("idle");
      setMessage("");
-+    setAnalyzingDocumentId(null);
++    setUploadProgress(0);
    }, []);
  
    function selectFile(nextFile: File | null) {
-@@ -66,11 +77,13 @@ export function UploadZone() {
-       const documentId = uploadData.document.id;
+@@ -59,23 +78,27 @@ export function UploadZone() {
+     if (!file) return;
  
-       setState("analyzing");
-+      setAnalyzingDocumentId(documentId);
-       setMessage("Document uploaded. Running analysis...");
+     setState("uploading");
+-    setMessage("Uploading document...");
++    setMessage("");
++    setUploadProgress(0);
  
-       const analysisData = await analyzeMutation.mutateAsync(documentId);
- 
-       setState("done");
-+      setAnalyzingDocumentId(null);
-       setMessage(
-         `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
-           analysisData.document.pageCount === 1 ? "" : "s"
-@@ -78,6 +91,7 @@ export function UploadZone() {
-       );
+     try {
+-      const uploadData = await uploadMutation.mutateAsync(file);
+-      const documentId = uploadData.document.id;
+-
+-      setState("analyzing");
+-      setMessage("Document uploaded. Running analysis...");
+-
+-      const analysisData = await analyzeMutation.mutateAsync(documentId);
+-
+-      setState("done");
+-      setMessage(
+-        `Analysis complete — ${analysisData.document.pageCount ?? "?"} page${
+-          analysisData.document.pageCount === 1 ? "" : "s"
+-        } processed.`
+-      );
++      const uploadData = await uploadMutation.mutateAsync({
++        file,
++        onProgress: setUploadProgress,
++      });
++
++      // Analysis is already queued server-side by the time this
++      // resolves — free the dropzone immediately instead of waiting.
++      setInFlight((current) => [
++        ...current,
++        { id: uploadData.document.id, name: uploadData.document.name },
++      ]);
++      notify({
++        title: "Queued for analysis",
++        description: uploadData.document.name,
++        variant: "info",
++      });
++      reset();
      } catch (error) {
        setState("error");
-+      setAnalyzingDocumentId(null);
        setMessage(
-         error instanceof Error ? error.message : "Something went wrong"
-       );
-@@ -187,6 +201,13 @@ export function UploadZone() {
+@@ -84,7 +107,11 @@ export function UploadZone() {
+     }
+   }
+ 
+-  const isBusy = state === "uploading" || state === "analyzing";
++  function removeInFlight(id: string) {
++    setInFlight((current) => current.filter((doc) => doc.id !== id));
++  }
++
++  const isBusy = state === "uploading";
+ 
+   return (
+     <div className="space-y-4 rounded-xl border p-6">
+@@ -141,52 +168,66 @@ export function UploadZone() {
+               Drop a document here or click to browse
+             </p>
+             <p className="text-xs text-muted-foreground">
+-              PDF, PNG, or JPEG — up to 20MB
++              PDF, PNG, or JPEG — up to 20MB. You can keep uploading while
++              earlier documents are still being analyzed.
+             </p>
+           </>
+         )}
+       </div>
+ 
+       <div className="flex items-center gap-2">
+-        <Button
+-          onClick={handleUpload}
+-          disabled={!file || isBusy || state === "done" || state === "error"}
+-        >
++        <Button onClick={handleUpload} disabled={!file || isBusy}>
+           {isBusy && <LoaderCircleIcon className="animate-spin" />}
+-          {state === "uploading"
+-            ? "Uploading..."
+-            : state === "analyzing"
+-              ? "Analyzing..."
+-              : "Upload & Analyze"}
++          {isBusy ? "Uploading..." : "Upload"}
+         </Button>
+ 
+         {file && !isBusy && (
+-          <Button variant="ghost" size="icon" onClick={reset}>
+-            <XIcon />
+-            <span className="sr-only">Clear selection</span>
+-          </Button>
+-        )}
+-
+-        {(state === "done" || state === "error") && (
+-          <Button variant="outline" onClick={reset}>
+-            Upload another
++          <Button variant="ghost" size="sm" onClick={reset}>
++            Clear
+           </Button>
+         )}
+       </div>
+ 
+-      {message && (
+-        <p
+-          className={`flex items-center gap-1.5 text-sm ${
+-            state === "error" ? "text-destructive" : "text-muted-foreground"
+-          }`}
++      {state === "uploading" && (
++        <div
++          className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
++          role="progressbar"
++          aria-valuenow={uploadProgress}
++          aria-valuemin={0}
++          aria-valuemax={100}
+         >
+-          {state === "error" && <AlertCircleIcon className="size-4 shrink-0" />}
+-          {state === "done" && (
+-            <CheckCircle2Icon className="size-4 shrink-0 text-primary" />
+-          )}
++          <div
++            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
++            style={{ width: `${uploadProgress}%` }}
++          />
++        </div>
++      )}
++
++      {state === "error" && message && (
++        <p className="flex items-center gap-1.5 text-sm text-destructive">
++          <AlertCircleIcon className="size-4 shrink-0" />
            {message}
          </p>
        )}
 +
-+      {state === "analyzing" && analyzingDocumentId && (
-+        <LivePipelineStatus
-+          documentId={analyzingDocumentId}
-+          initialStages={PLACEHOLDER_STAGES}
-+        />
++      {inFlight.length > 0 && (
++        <div className="space-y-3 border-t border-border pt-4">
++          <p className="text-xs font-medium text-muted-foreground">
++            Processing ({inFlight.length})
++          </p>
++          {inFlight.map((doc) => (
++            <div key={doc.id} className="space-y-2">
++              <p className="truncate text-sm font-medium">{doc.name}</p>
++              <LivePipelineStatus
++                documentId={doc.id}
++                initialStages={PLACEHOLDER_STAGES}
++                onComplete={() => removeInFlight(doc.id)}
++                onFailed={() => removeInFlight(doc.id)}
++              />
++            </div>
++          ))}
++        </div>
 +      )}
      </div>
    );
  }
 diff --git a/components/ui/tabs.tsx b/components/ui/tabs.tsx
 new file mode 100644
-index 0000000..f9f8f0c
+index 0000000..80e66b8
 --- /dev/null
 +++ b/components/ui/tabs.tsx
 @@ -0,0 +1,83 @@
@@ -2576,7 +3137,7 @@ index 0000000..f9f8f0c
 +      aria-selected={active}
 +      onClick={() => ctx.setValue(value)}
 +      className={cn(
-+        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
++        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
 +        active
 +          ? "bg-background text-foreground shadow-sm"
 +          : "text-muted-foreground hover:text-foreground"
@@ -2599,6 +3160,125 @@ index 0000000..f9f8f0c
 +  const ctx = useTabsContext();
 +  if (ctx.value !== value) return null;
 +  return <div className={className}>{children}</div>;
++}
+diff --git a/components/ui/toast.tsx b/components/ui/toast.tsx
+new file mode 100644
+index 0000000..4d42d01
+--- /dev/null
++++ b/components/ui/toast.tsx
+@@ -0,0 +1,113 @@
++"use client";
++
++import {
++  createContext,
++  useCallback,
++  useContext,
++  useRef,
++  useState,
++  type ReactNode,
++} from "react";
++import { CheckCircle2Icon, AlertCircleIcon, XIcon } from "lucide-react";
++import { cn } from "cn";
++
++type ToastVariant = "success" | "error" | "info";
++
++type Toast = {
++  id: number;
++  title: string;
++  description?: string;
++  variant: ToastVariant;
++};
++
++type NotifyInput = Omit<Toast, "id">;
++
++const ToastContext = createContext<((toast: NotifyInput) => void) | null>(null);
++
++/**
++ * App-wide, in-app notification — no email/push infra, just a fixed
++ * stack rendered from React state. This is what backs "you get notified
++ * when it finishes" for the lightweight, no-new-infra approach.
++ */
++export function useToast() {
++  const notify = useContext(ToastContext);
++  if (!notify) throw new Error("useToast must be used within <ToastProvider>");
++  return notify;
++}
++
++const VARIANT_ICON: Record<ToastVariant, typeof CheckCircle2Icon> = {
++  success: CheckCircle2Icon,
++  error: AlertCircleIcon,
++  info: CheckCircle2Icon,
++};
++
++const VARIANT_CLASSES: Record<ToastVariant, string> = {
++  success: "border-chart-2/30 text-foreground",
++  error: "border-destructive/30 text-foreground",
++  info: "border-border text-foreground",
++};
++
++const VARIANT_ICON_CLASSES: Record<ToastVariant, string> = {
++  success: "text-chart-2",
++  error: "text-destructive",
++  info: "text-primary",
++};
++
++export function ToastProvider({ children }: { children: ReactNode }) {
++  const [toasts, setToasts] = useState<Toast[]>([]);
++  const nextId = useRef(0);
++
++  const notify = useCallback((input: NotifyInput) => {
++    const id = nextId.current++;
++    setToasts((current) => [...current, { ...input, id }]);
++    setTimeout(() => {
++      setToasts((current) => current.filter((t) => t.id !== id));
++    }, 6000);
++  }, []);
++
++  function dismiss(id: number) {
++    setToasts((current) => current.filter((t) => t.id !== id));
++  }
++
++  return (
++    <ToastContext.Provider value={notify}>
++      {children}
++
++      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2">
++        {toasts.map((toast) => {
++          const Icon = VARIANT_ICON[toast.variant];
++          return (
++            <div
++              key={toast.id}
++              role="status"
++              className={cn(
++                "animate-fade-in-up pointer-events-auto flex items-start gap-2.5 rounded-xl border bg-card p-3.5 shadow-md ring-1 ring-foreground/5",
++                VARIANT_CLASSES[toast.variant]
++              )}
++            >
++              <Icon
++                className={cn("mt-0.5 size-4 shrink-0", VARIANT_ICON_CLASSES[toast.variant])}
++              />
++              <div className="min-w-0 flex-1">
++                <p className="text-sm font-medium">{toast.title}</p>
++                {toast.description && (
++                  <p className="mt-0.5 text-xs text-muted-foreground">
++                    {toast.description}
++                  </p>
++                )}
++              </div>
++              <button
++                type="button"
++                onClick={() => dismiss(toast.id)}
++                aria-label="Dismiss notification"
++                className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
++              >
++                <XIcon className="size-3.5" />
++              </button>
++            </div>
++          );
++        })}
++      </div>
++    </ToastContext.Provider>
++  );
 +}
 diff --git a/lib/analysis-view.ts b/lib/analysis-view.ts
 new file mode 100644
@@ -2755,6 +3435,138 @@ index 0000000..70e2186
 +
 +  return Array.from(new Set(suggestions)).slice(0, 4);
 +}
+diff --git a/lib/document-processing.ts b/lib/document-processing.ts
+new file mode 100644
+index 0000000..6d772d4
+--- /dev/null
++++ b/lib/document-processing.ts
+@@ -0,0 +1,75 @@
++import { prisma } from "@/lib/prisma";
++import { generateBlobSasUrl } from "@/lib/azure/blob";
++import { analyzeDocument, getAnalysisResult } from "@/lib/azure/analyze-document";
++import { normalizeDocument } from "@/lib/azure/normalize-document";
++import { storeDocumentChunks } from "@/lib/ai/store-chunks";
++import { indexDocumentChunks } from "@/lib/ai/index-chunks";
++import { getAnalysisContext } from "@/lib/ai/get-analysis-context";
++import { analyzeDocumentWithAI } from "@/lib/ai/analyze-document";
++import { storeAnalysis } from "@/lib/ai/store-analysis";
++
++/**
++ * Runs the full extraction → indexing → AI analysis pipeline for a
++ * document that's already been uploaded. This is the one place that
++ * logic lives — both the manual "Retry analysis" route and the
++ * automatic background trigger fired right after upload call this, so
++ * there's exactly one implementation of what "processing a document"
++ * means.
++ */
++export async function processDocumentAnalysis(documentId: string) {
++  const document = await prisma.document.findUniqueOrThrow({
++    where: { id: documentId },
++  });
++
++  await prisma.document.update({
++    where: { id: documentId },
++    data: { status: "PROCESSING" },
++  });
++
++  try {
++    const sasUrl = generateBlobSasUrl(document.blobPath);
++    const operationLocation = await analyzeDocument(sasUrl);
++    const result = await getAnalysisResult(operationLocation);
++    const parsed = normalizeDocument(result);
++
++    const chunkStats = await storeDocumentChunks(documentId, parsed);
++    const searchStats = await indexDocumentChunks(documentId);
++
++    // Recorded the moment indexing succeeds (not batched with the final
++    // update below) so the processing pipeline UI can show "indexed" as
++    // its own real, observable step while analysis is still running.
++    await prisma.document.update({
++      where: { id: documentId },
++      data: { indexedAt: new Date() },
++    });
++
++    const analysisContext = await getAnalysisContext(documentId);
++    const aiAnalysis = await analyzeDocumentWithAI(analysisContext);
++    await storeAnalysis(documentId, aiAnalysis);
++
++    const updated = await prisma.document.update({
++      where: { id: documentId },
++      data: {
++        status: "ANALYZED",
++        pageCount: parsed.pageCount,
++        extractedText: parsed.fullText,
++      },
++    });
++
++    return {
++      document: { id: updated.id, name: updated.name, pageCount: parsed.pageCount },
++      chunks: chunkStats,
++      search: searchStats,
++      analysis: aiAnalysis,
++    };
++  } catch (error) {
++    console.error(`Document analysis failed for ${documentId}:`, error);
++
++    await prisma.document.update({
++      where: { id: documentId },
++      data: { status: "FAILED" },
++    });
++
++    throw error;
++  }
++}
+diff --git a/lib/hooks/use-count-up.ts b/lib/hooks/use-count-up.ts
+new file mode 100644
+index 0000000..55847c1
+--- /dev/null
++++ b/lib/hooks/use-count-up.ts
+@@ -0,0 +1,45 @@
++import { useEffect, useRef, useState } from "react";
++
++/**
++ * Animates a number counting up from its previous value to `target`.
++ * Pure CSS can't animate a text node's numeric content, so this is a
++ * small rAF-driven hook rather than a new dependency.
++ */
++export function useCountUp(target: number, durationMs = 600): number {
++  const [value, setValue] = useState(target);
++  const previousTarget = useRef(target);
++  const frameRef = useRef<number | undefined>(undefined);
++
++  useEffect(() => {
++    const from = previousTarget.current;
++    const to = target;
++    previousTarget.current = target;
++
++    if (from === to) {
++      setValue(to);
++      return;
++    }
++
++    const start = performance.now();
++
++    function tick(now: number) {
++      const progress = Math.min((now - start) / durationMs, 1);
++      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
++      setValue(Math.round(from + (to - from) * eased));
++
++      if (progress < 1) {
++        frameRef.current = requestAnimationFrame(tick);
++      }
++    }
++
++    frameRef.current = requestAnimationFrame(tick);
++
++    return () => {
++      if (frameRef.current !== undefined) {
++        cancelAnimationFrame(frameRef.current);
++      }
++    };
++  }, [target, durationMs]);
++
++  return value;
++}
 diff --git a/lib/mime-labels.ts b/lib/mime-labels.ts
 new file mode 100644
 index 0000000..2057b40
@@ -2854,7 +3666,7 @@ index 0000000..d4f37b1
 +  });
 +}
 diff --git a/lib/queries/documents.ts b/lib/queries/documents.ts
-index 6da3106..ad4f364 100644
+index 6da3106..6439485 100644
 --- a/lib/queries/documents.ts
 +++ b/lib/queries/documents.ts
 @@ -7,7 +7,10 @@ import {
@@ -2925,6 +3737,102 @@ index 6da3106..ad4f364 100644
  export function useDocumentChunksQuery(documentId: string, enabled = true) {
    return useQuery({
      queryKey: documentKeys.chunks(documentId),
+@@ -55,32 +108,78 @@ export function useDocumentChunksQuery(documentId: string, enabled = true) {
+   });
+ }
+ 
+-async function uploadDocumentRequest(file: File) {
++function extractErrorMessage(data: unknown, fallback: string): string {
++  if (
++    data &&
++    typeof data === "object" &&
++    "error" in data &&
++    typeof (data as { error?: unknown }).error === "string"
++  ) {
++    return (data as { error: string }).error;
++  }
++  return fallback;
++}
++
++async function uploadDocumentRequest(
++  file: File,
++  onProgress?: (percent: number) => void
++) {
+   const formData = new FormData();
+   formData.append("file", file);
+ 
+-  const response = await fetch("/api/documents/upload", {
+-    method: "POST",
+-    body: formData,
+-  });
+-
+-  const data = await response.json().catch(() => null);
+-
+-  if (!response.ok) {
+-    throw new ApiError(
+-      (data && typeof data.error === "string" && data.error) || "Upload failed",
+-      response.status
+-    );
+-  }
+-
+-  return uploadResponseSchema.parse(data);
++  // Plain `fetch` doesn't expose upload progress, so this one request
++  // uses XHR instead — purely for the real progress bar in the upload
++  // zone, not a change to how anything is validated or stored.
++  return new Promise<ReturnType<typeof uploadResponseSchema.parse>>(
++    (resolve, reject) => {
++      const xhr = new XMLHttpRequest();
++      xhr.open("POST", "/api/documents/upload");
++
++      xhr.upload.onprogress = (event) => {
++        if (event.lengthComputable && onProgress) {
++          onProgress(Math.round((event.loaded / event.total) * 100));
++        }
++      };
++
++      xhr.onload = () => {
++        let data: unknown = null;
++        try {
++          data = JSON.parse(xhr.responseText);
++        } catch {
++          // leave data as null; handled below
++        }
++
++        if (xhr.status < 200 || xhr.status >= 300) {
++          reject(
++            new ApiError(extractErrorMessage(data, "Upload failed"), xhr.status)
++          );
++          return;
++        }
++
++        try {
++          resolve(uploadResponseSchema.parse(data));
++        } catch {
++          reject(new ApiError("Received an unexpected response", xhr.status));
++        }
++      };
++
++      xhr.onerror = () => reject(new ApiError("Upload failed", 0));
++      xhr.send(formData);
++    }
++  );
+ }
+ 
+ export function useUploadDocumentMutation() {
+   const queryClient = useQueryClient();
+ 
+   return useMutation({
+-    mutationFn: uploadDocumentRequest,
++    mutationFn: ({
++      file,
++      onProgress,
++    }: {
++      file: File;
++      onProgress?: (percent: number) => void;
++    }) => uploadDocumentRequest(file, onProgress),
+     onSuccess: () => {
+       queryClient.invalidateQueries({ queryKey: documentKeys.list() });
+     },
 diff --git a/lib/validations/api-responses.ts b/lib/validations/api-responses.ts
 index aec7524..3768c0b 100644
 --- a/lib/validations/api-responses.ts

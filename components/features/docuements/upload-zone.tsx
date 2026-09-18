@@ -98,7 +98,11 @@ export function UploadZone() {
     }
   }
 
-  const isBusy = state === "uploading" || state === "analyzing";
+  function removeInFlight(id: string) {
+    setInFlight((current) => current.filter((doc) => doc.id !== id));
+  }
+
+  const isBusy = state === "uploading";
 
   return (
     <div className="space-y-4 rounded-xl border p-6">

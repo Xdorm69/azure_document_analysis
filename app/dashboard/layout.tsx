@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import type { ReactNode } from "react";
 
 import { prisma } from "@/lib/prisma";
+import { DocumentStatusWatcher } from "@/components/features/docuements/document-status-watcher";
 
 export default async function DashboardLayout({
   children,
@@ -23,5 +24,10 @@ export default async function DashboardLayout({
     redirect("/onboard");
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <DocumentStatusWatcher />
+      {children}
+    </>
+  );
 }

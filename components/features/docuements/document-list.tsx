@@ -23,7 +23,7 @@ export function DocumentList({
         {[0, 1, 2].map((i) => (
           <div
             key={i}
-            className="h-[72px] animate-pulse rounded-xl bg-muted"
+            className="h-[88px] animate-pulse rounded-xl bg-muted"
           />
         ))}
       </div>
@@ -34,6 +34,18 @@ export function DocumentList({
     return (
       <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-sm text-destructive">
         {error}
+      </div>
+    );
+  }
+
+  if (documents.length === 0 && isFiltered) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed p-10 text-center">
+        <SearchXIcon className="size-8 text-muted-foreground" />
+        <p className="mt-3 text-sm font-medium">No matching documents</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Try a different search term or filter.
+        </p>
       </div>
     );
   }
